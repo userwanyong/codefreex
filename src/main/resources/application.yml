@@ -3,10 +3,19 @@ spring:
     name: codefreex
   profiles:
     active: local
+  session:
+    store-type: redis
+    timeout: 1800
 server:
   port: 8123
   servlet:
     context-path: /api
+# MyBatis-Flex
+mybatis-flex:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    logic-delete-column: is_delete
 # springdoc-openapi
 springdoc:
   group-configs:

@@ -34,3 +34,4 @@ build/
 
 ### Local profile ###
 application-local.yml
+/docs/
