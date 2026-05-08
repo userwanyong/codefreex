@@ -15,6 +15,10 @@
     <description>codefreex</description>
     <properties>
         <java.version>21</java.version>
+        <dubbo.version>3.3.2</dubbo.version>
+        <nacos-client.version>2.4.2</nacos-client.version>
+        <protobuf.version>3.25.2</protobuf.version>
+        <okhttp3.version>4.12.0</okhttp3.version>
     </properties>
     <dependencies>
         <dependency>
@@ -26,6 +30,10 @@
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
         <dependency>
             <groupId>com.mysql</groupId>
@@ -84,6 +92,50 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <!-- AOP -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- ==================== Dubbo RPC (调用 auth-service) ==================== -->
+        <dependency>
+            <groupId>cn.wanyj.auth</groupId>
+            <artifactId>auth-service-api</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-spring-boot-starter</artifactId>
+            <version>${dubbo.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-registry-nacos</artifactId>
+            <version>${dubbo.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-client</artifactId>
+            <version>${nacos-client.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-rpc-triple</artifactId>
+            <version>${dubbo.version}</version>
+        </dependency>
+
+        <!-- ==================== Authing Java SDK (微信/邮箱登录) ==================== -->
+        <dependency>
+            <groupId>cn.authing</groupId>
+            <artifactId>authing-java-sdk</artifactId>
+            <version>3.1.20</version>
         </dependency>
 
     </dependencies>

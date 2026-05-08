@@ -6,6 +6,9 @@ spring:
   session:
     store-type: redis
     timeout: 1800
+  devtools:
+    restart:
+      enabled: false
 server:
   port: 8123
   servlet:
@@ -26,3 +29,11 @@ knife4j:
   enable: true
   setting:
     language: zh_cn
+# Dubbo RPC
+dubbo:
+  application:
+    name: ${spring.application.name}
+    qos-enable: false
+  consumer:
+    timeout: 5000
+    check: false

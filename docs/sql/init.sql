@@ -1,0 +1,176 @@
+-- =============================================
+-- CodeFreeX 数据库初始化脚本
+-- =============================================
+
+CREATE DATABASE IF NOT EXISTS codefreex DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+USE codefreex;
+
+-- =============================================
+-- 1. 用户关联表
+-- =============================================
+CREATE TABLE IF NOT EXISTS user_info
+(
+    id                BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    user_id           BIGINT                             NOT NULL COMMENT '用户id（关联认证服务用户）',
+    inviter_id        BIGINT                             NULL COMMENT '邀请人用户id',
+    total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度（token）',
+    remaining_credits INT          DEFAULT 0             NOT NULL COMMENT '剩余额度（token）',
+    create_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete         TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_userId (user_id),
+    INDEX idx_inviterId (inviter_id)
+) COMMENT '用户关联表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 2. 邀请表
+-- =============================================
+CREATE TABLE IF NOT EXISTS invite
+(
+    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    invite_code   VARCHAR(64)                        NOT NULL COMMENT '邀请码',
+    user_id       BIGINT                             NOT NULL COMMENT '生成者用户id',
+    batch         VARCHAR(128)                       NULL COMMENT '批次号（方便批量管理）',
+    status        VARCHAR(32)  DEFAULT 'unused'      NOT NULL COMMENT '状态（unused/partial/used/expired/disabled）',
+    expire_time   DATETIME                           NULL COMMENT '过期时间（为空表示永不过期）',
+    max_use_count INT      DEFAULT 1                 NOT NULL COMMENT '最大使用次数',
+    used_count    INT      DEFAULT 0                 NOT NULL COMMENT '已使用次数',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete     TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_inviteCode (invite_code),
+    INDEX idx_userId (user_id),
+    INDEX idx_batch (batch),
+    INDEX idx_status (status)
+) COMMENT '邀请表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 3. 邀请-用户关联表
+-- =============================================
+CREATE TABLE IF NOT EXISTS invite_user
+(
+    id          BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    invite_id   BIGINT                             NOT NULL COMMENT '邀请码id',
+    inviter_id  BIGINT                             NOT NULL COMMENT '邀请人用户id',
+    invitee_id  BIGINT                             NOT NULL COMMENT '受邀用户id',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '使用时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    INDEX idx_inviteId (invite_id),
+    INDEX idx_inviterId (inviter_id),
+    INDEX idx_inviteeId (invitee_id)
+) COMMENT '邀请-用户关联表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 4. 兑换表
+-- =============================================
+CREATE TABLE IF NOT EXISTS redeem
+(
+    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    redeem_code   VARCHAR(64)                        NOT NULL COMMENT '兑换码',
+    user_id       BIGINT                             NOT NULL COMMENT '生成者用户id（管理员）',
+    batch         VARCHAR(128)                       NULL COMMENT '批次号',
+    quota         INT                                NOT NULL COMMENT '兑换额度（token）',
+    status        VARCHAR(32)  DEFAULT 'unused'      NOT NULL COMMENT '状态（unused/partial/used/expired/disabled）',
+    expire_time   DATETIME                           NULL COMMENT '过期时间（为空表示永不过期）',
+    max_use_count INT      DEFAULT 1                 NOT NULL COMMENT '最大使用次数',
+    used_count    INT      DEFAULT 0                 NOT NULL COMMENT '已使用次数',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete     TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_redeemCode (redeem_code),
+    INDEX idx_userId (user_id),
+    INDEX idx_batch (batch),
+    INDEX idx_status (status)
+) COMMENT '兑换表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 5. 兑换-用户关联表
+-- =============================================
+CREATE TABLE IF NOT EXISTS redeem_user
+(
+    id          BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    redeem_id   BIGINT                             NOT NULL COMMENT '兑换码id',
+    creator_id  BIGINT                             NOT NULL COMMENT '生成者用户id（管理员）',
+    user_id     BIGINT                             NOT NULL COMMENT '使用用户id',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '使用时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    INDEX idx_redeemId (redeem_id),
+    INDEX idx_creatorId (creator_id),
+    INDEX idx_userId (user_id)
+) COMMENT '兑换-用户关联表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 6. 应用表
+-- =============================================
+CREATE TABLE IF NOT EXISTS app
+(
+    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    app_name      VARCHAR(256)                       NULL COMMENT '应用名称',
+    description   VARCHAR(1024)                      NULL COMMENT '应用描述',
+    cover         VARCHAR(512)                       NULL COMMENT '应用封面',
+    init_prompt   TEXT                               NULL COMMENT '应用初始化的 prompt',
+    code_gen_type VARCHAR(64)                        NULL COMMENT '代码生成类型（枚举）',
+    status        VARCHAR(32)  DEFAULT 'draft'       NOT NULL COMMENT '应用状态（draft/generating/generated/deployed/disabled）',
+    deploy_key    VARCHAR(64)                        NULL COMMENT '部署标识',
+    deployed_time DATETIME                           NULL COMMENT '部署时间',
+    is_public     TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否公开（0-未公开 1-公开）',
+    is_featured   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否精选（0-否 1-是）',
+    priority      INT       DEFAULT 0                 NOT NULL COMMENT '优先级（越高越优先展示）',
+    view_count    INT       DEFAULT 0                 NOT NULL COMMENT '浏览次数',
+    like_count    INT       DEFAULT 0                 NOT NULL COMMENT '点赞数',
+    tags          JSON                               NULL COMMENT '标签列表（如 ["工具","效率"]）',
+    user_id       BIGINT                             NOT NULL COMMENT '创建用户id',
+    edit_time     DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '编辑时间',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete     TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_deployKey (deploy_key),
+    INDEX idx_appName (app_name),
+    INDEX idx_userId (user_id),
+    INDEX idx_status (status),
+    INDEX idx_isFeatured_priority (is_featured, priority DESC)
+) COMMENT '应用' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 7. 对话历史表
+-- =============================================
+CREATE TABLE IF NOT EXISTS chat_history
+(
+    id           BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    message      TEXT                               NOT NULL COMMENT '消息',
+    parent_id    BIGINT                             NULL COMMENT '父消息id（上下文关联）',
+    message_type VARCHAR(32)                        NOT NULL COMMENT '消息类型（user/ai）',
+    app_id       BIGINT                             NOT NULL COMMENT '应用id',
+    user_id      BIGINT                             NOT NULL COMMENT '创建用户id',
+    create_time  DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    update_time  DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间' ON UPDATE CURRENT_TIMESTAMP,
+    is_delete    TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    INDEX idx_appId (app_id),
+    INDEX idx_createTime (create_time),
+    INDEX idx_appId_createTime (app_id, create_time)
+) COMMENT '对话历史' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 8. 用户用量统计表
+-- =============================================
+CREATE TABLE IF NOT EXISTS user_usage
+(
+    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    user_id       BIGINT                             NOT NULL COMMENT '用户id',
+    app_id        BIGINT                             NOT NULL COMMENT '应用id',
+    model_id      VARCHAR(128)                       NULL COMMENT '使用的模型标识',
+    input_tokens  INT       DEFAULT 0                 NOT NULL COMMENT '输入token数',
+    output_tokens INT       DEFAULT 0                 NOT NULL COMMENT '输出token数',
+    total_tokens  INT       DEFAULT 0                 NOT NULL COMMENT '总token数',
+    latency       INT       DEFAULT 0                 NOT NULL COMMENT '响应延迟（毫秒）',
+    status        VARCHAR(32)                        NOT NULL COMMENT '调用状态（success/fail）',
+    error_info    TEXT                               NULL COMMENT '失败时的错误信息',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    INDEX idx_userId (user_id),
+    INDEX idx_appId (app_id),
+    INDEX idx_modelId (model_id),
+    INDEX idx_userId_createTime (user_id, create_time)
+) COMMENT '用户用量统计' COLLATE = utf8mb4_unicode_ci;

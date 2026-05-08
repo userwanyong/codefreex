@@ -34,4 +34,5 @@ build/
 
 ### Local profile ###
 application-local.yml
-/docs/
+/docs/md
+/.claude/
