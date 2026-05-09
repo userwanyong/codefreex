@@ -97,7 +97,7 @@ public class AuthServiceImpl implements AuthService {
         inviteService.validateInviteCode(request.getInviteCode());
 
         try {
-            // 2. 通过 Authing 验证邮箱验证码并注册
+            // 2. 通过 Authing 验证邮箱验证码（仅校验验证码，不依赖注册结果）
             AuthenticationClient client = authingConfig.newAuthenticationClient();
             SignUpProfileDto profile = new SignUpProfileDto();
             profile.setPreferredUsername(request.getEmail());
@@ -109,7 +109,16 @@ public class AuthServiceImpl implements AuthService {
                     profile,
                     new SignUpOptionsDto()
             );
-            ensureAuthingSuccess(signUpResponse.getStatusCode(), signUpResponse.getMessage(), "邮箱注册失败");
+
+            // 验证码校验：200(新注册成功) 或"用户已存在"均视为验证码正确
+            Integer statusCode = signUpResponse.getStatusCode();
+            String responseMsg = signUpResponse.getMessage();
+            boolean userAlreadyExists = statusCode != null && statusCode != 200
+                    && StringUtils.isNotBlank(responseMsg) && responseMsg.contains("已存在");
+            if (statusCode != null && statusCode != 200 && !userAlreadyExists) {
+                throw new BusinessException(ResponseCode.PARAMS_ERROR,
+                        "验证码校验失败" + (StringUtils.isNotBlank(responseMsg) ? ": " + responseMsg : ""));
+            }
 
             // 3. 在 auth-service 中注册用户
             String nickname = resolveEmailNickname(signUpResponse.getData(), request.getEmail());
