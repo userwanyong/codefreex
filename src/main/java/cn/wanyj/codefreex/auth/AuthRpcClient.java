@@ -42,7 +42,7 @@ public class AuthRpcClient {
         RegisterRpcRequest.Builder builder = RegisterRpcRequest.newBuilder()
                 .setUsername(username)
                 .setPassword(password)
-                .setTenantId(tenantId != null ? tenantId : this.tenantId);
+                .setTenantId(String.valueOf(tenantId != null ? tenantId : this.tenantId));
         if (email != null) {
             builder.setEmail(email);
         }
@@ -59,7 +59,7 @@ public class AuthRpcClient {
         LoginRpcRequest request = LoginRpcRequest.newBuilder()
                 .setUsername(username)
                 .setPassword(password)
-                .setTenantId(tenantId != null ? tenantId : this.tenantId)
+                .setTenantId(String.valueOf(tenantId != null ? tenantId : this.tenantId))
                 .build();
         return authRpcService.authenticate(request);
     }
@@ -80,8 +80,8 @@ public class AuthRpcClient {
      */
     public LoginUserContext getUserById(Long userId) {
         UserByIdRequest request = UserByIdRequest.newBuilder()
-                .setUserId(userId)
-                .setTenantId(tenantId)
+                .setUserId(String.valueOf(userId))
+                .setTenantId(String.valueOf(tenantId))
                 .build();
         UserRpcResponse user = authRpcService.getUserById(request);
         if (user == null || user.getId() == 0) {
@@ -96,7 +96,7 @@ public class AuthRpcClient {
     public LoginUserContext getUserByUsername(String username) {
         UserByUsernameRequest request = UserByUsernameRequest.newBuilder()
                 .setUsername(username)
-                .setTenantId(tenantId)
+                .setTenantId(String.valueOf(tenantId))
                 .build();
         UserRpcResponse user = authRpcService.getUserByUsername(request);
         if (user == null || user.getId() == 0) {
@@ -111,8 +111,8 @@ public class AuthRpcClient {
     public List<String> getUserRoles(Long userId) {
         try {
             UserRolesRequest request = UserRolesRequest.newBuilder()
-                    .setUserId(userId)
-                    .setTenantId(tenantId)
+                    .setUserId(String.valueOf(userId))
+                    .setTenantId(String.valueOf(tenantId))
                     .build();
             StringListResponse response = authRpcService.getUserRoles(request);
             return response.getValuesList();
@@ -128,8 +128,8 @@ public class AuthRpcClient {
     public List<String> getUserPermissions(Long userId) {
         try {
             UserPermissionsRequest request = UserPermissionsRequest.newBuilder()
-                    .setUserId(userId)
-                    .setTenantId(tenantId)
+                    .setUserId(String.valueOf(userId))
+                    .setTenantId(String.valueOf(tenantId))
                     .build();
             StringListResponse response = authRpcService.getUserPermissions(request);
             return response.getValuesList();
@@ -157,7 +157,7 @@ public class AuthRpcClient {
      */
     public String generateToken(Long userId, long expirationSeconds) {
         TokenGenerationRequest request = TokenGenerationRequest.newBuilder()
-                .setUserId(userId)
+                .setUserId(String.valueOf(userId))
                 .setExpiration(expirationSeconds)
                 .build();
         TokenRpcResponse response = tokenRpcService.generateToken(request);
