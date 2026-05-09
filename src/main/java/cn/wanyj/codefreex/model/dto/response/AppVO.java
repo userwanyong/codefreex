@@ -21,6 +21,10 @@ public class AppVO {
 
     private String cover;
 
+    private String initPrompt;
+
+    private LocalDateTime deployedTime;
+
     private String codeGenType;
 
     private String status;

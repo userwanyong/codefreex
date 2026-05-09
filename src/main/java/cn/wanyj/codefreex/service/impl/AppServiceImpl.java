@@ -232,6 +232,8 @@ public class AppServiceImpl implements AppService {
         vo.setLikeCount(app.getLikeCount());
         vo.setTags(app.getTags() != null ? app.getTags() : Collections.emptyList());
         vo.setUserId(app.getUserId());
+        vo.setInitPrompt(app.getInitPrompt());
+        vo.setDeployedTime(app.getDeployedTime());
         vo.setEditTime(app.getEditTime());
         vo.setCreateTime(app.getCreateTime());
         return vo;
