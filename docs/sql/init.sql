@@ -11,7 +11,7 @@ USE codefreex;
 -- =============================================
 CREATE TABLE IF NOT EXISTS user_info
 (
-    id                BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id                BIGINT                             COMMENT 'id' PRIMARY KEY,
     user_id           BIGINT                             NOT NULL COMMENT '用户id（关联认证服务用户）',
     inviter_id        BIGINT                             NULL COMMENT '邀请人用户id',
     total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度（token）',
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS user_info
 -- =============================================
 CREATE TABLE IF NOT EXISTS invite
 (
-    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id            BIGINT                             COMMENT 'id' PRIMARY KEY,
     invite_code   VARCHAR(64)                        NOT NULL COMMENT '邀请码',
     user_id       BIGINT                             NOT NULL COMMENT '生成者用户id',
     batch         VARCHAR(128)                       NULL COMMENT '批次号（方便批量管理）',
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS invite_user
 -- =============================================
 CREATE TABLE IF NOT EXISTS redeem
 (
-    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id            BIGINT                             COMMENT 'id' PRIMARY KEY,
     redeem_code   VARCHAR(64)                        NOT NULL COMMENT '兑换码',
     user_id       BIGINT                             NOT NULL COMMENT '生成者用户id（管理员）',
     batch         VARCHAR(128)                       NULL COMMENT '批次号',
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS redeem_user
 -- =============================================
 CREATE TABLE IF NOT EXISTS app
 (
-    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id            BIGINT                             COMMENT 'id' PRIMARY KEY,
     app_name      VARCHAR(256)                       NULL COMMENT '应用名称',
     description   VARCHAR(1024)                      NULL COMMENT '应用描述',
     cover         VARCHAR(512)                       NULL COMMENT '应用封面',
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS app
 -- =============================================
 CREATE TABLE IF NOT EXISTS chat_history
 (
-    id           BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id           BIGINT                             COMMENT 'id' PRIMARY KEY,
     message      TEXT                               NOT NULL COMMENT '消息',
     parent_id    BIGINT                             NULL COMMENT '父消息id（上下文关联）',
     message_type VARCHAR(32)                        NOT NULL COMMENT '消息类型（user/ai）',
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS chat_history
 -- =============================================
 CREATE TABLE IF NOT EXISTS user_usage
 (
-    id            BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    id            BIGINT                             COMMENT 'id' PRIMARY KEY,
     user_id       BIGINT                             NOT NULL COMMENT '用户id',
     app_id        BIGINT                             NOT NULL COMMENT '应用id',
     model_id      VARCHAR(128)                       NULL COMMENT '使用的模型标识',
