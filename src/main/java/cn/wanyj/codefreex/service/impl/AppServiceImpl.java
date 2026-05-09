@@ -190,6 +190,16 @@ public class AppServiceImpl implements AppService {
         return PageResponse.of(page.getRecords(), page.getTotalRow(), (int) page.getPageNumber(), (int) page.getPageSize());
     }
 
+    @Override
+    public void updateAppStatus(Long appId, String status) {
+        AppStatus.fromValue(status);
+        UpdateChain.of(App.class)
+                .where(APP.ID.eq(appId))
+                .set(APP.STATUS, status)
+                .set(APP.EDIT_TIME, LocalDateTime.now())
+                .update();
+    }
+
     /**
      * 校验应用存在且属于当前用户
      */
