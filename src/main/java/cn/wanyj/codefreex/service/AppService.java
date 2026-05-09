@@ -83,4 +83,12 @@ public interface AppService {
      * @return 分页结果
      */
     PageResponse<App> listAppsForAdmin(AppQueryRequest request);
+
+    /**
+     * 更新应用状态
+     *
+     * @param appId  应用ID
+     * @param status 新状态
+     */
+    void updateAppStatus(Long appId, String status);
 }

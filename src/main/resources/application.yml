@@ -37,3 +37,17 @@ dubbo:
   consumer:
     timeout: 5000
     check: false
+# LangChain4j OpenAI 配置（主生成模型 - 流式，敏感信息在 application-local.yml 中配置）
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      temperature: 0.7
+      max-tokens: 163840
+      log-requests: false
+      log-responses: false
+# AI 自定义配置
+ai:
+  review:
+    temperature: 0.3
+    max-tokens: 2048
+  prompts-dir: classpath:prompts/

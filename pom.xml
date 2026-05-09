@@ -138,6 +138,23 @@
             <version>3.1.20</version>
         </dependency>
 
+        <!-- ==================== LangChain4j (AI 编排框架) ==================== -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>1.13.1</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>1.13.1</version>
+        </dependency>
+        <!-- WebFlux (SSE 响应式支持) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>
