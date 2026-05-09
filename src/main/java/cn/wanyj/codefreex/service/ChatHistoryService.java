@@ -3,6 +3,8 @@ package cn.wanyj.codefreex.service;
 import cn.wanyj.codefreex.model.dto.response.ChatHistoryCursorResponse;
 import cn.wanyj.codefreex.model.entity.ChatHistory;
 
+import java.util.List;
+
 /**
  * @author BanXia
  */
@@ -27,4 +29,9 @@ public interface ChatHistoryService {
      * 游标分页查询历史消息
      */
     ChatHistoryCursorResponse listChatHistory(Long appId, Long userId, String cursor, int size);
+
+    /**
+     * 查询最近的历史消息（按时间正序返回）
+     */
+    List<ChatHistory> listRecentMessages(Long appId, Long userId, int limit);
 }

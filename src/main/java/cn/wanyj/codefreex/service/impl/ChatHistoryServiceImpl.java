@@ -83,6 +83,22 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         return ChatHistoryCursorResponse.of(records, nextCursor, hasNext);
     }
 
+    @Override
+    public List<ChatHistory> listRecentMessages(Long appId, Long userId, int limit) {
+        checkAppOwner(appId, userId);
+
+        int pageSize = Math.min(Math.max(limit, 1), MAX_PAGE_SIZE);
+        QueryWrapper query = QueryWrapper.create()
+                .where(CHAT_HISTORY.APP_ID.eq(appId))
+                .and(CHAT_HISTORY.USER_ID.eq(userId))
+                .orderBy(CHAT_HISTORY.CREATE_TIME.desc(), CHAT_HISTORY.ID.desc())
+                .limit(pageSize);
+
+        List<ChatHistory> records = chatHistoryMapper.selectListByQuery(query);
+        Collections.reverse(records);
+        return records;
+    }
+
     private ChatHistory saveMessage(Long appId, Long userId, String message, String messageType, Long parentId) {
         checkAppOwner(appId, userId);
         validateMessage(message);
