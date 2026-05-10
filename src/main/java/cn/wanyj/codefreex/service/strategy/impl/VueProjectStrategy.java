@@ -14,7 +14,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * Vue 宸ョ▼鎸佷箙鍖栫瓥鐣?
+ * Vue 工程持久化策略
  *
  * @author BanXia
  */
@@ -37,7 +37,7 @@ public class VueProjectStrategy implements CodePersistStrategy {
         try {
             Files.createDirectories(sourceDir);
         } catch (Exception e) {
-            throw new RuntimeException("鍒涘缓 Vue 宸ョ▼鐩綍澶辫触", e);
+            throw new RuntimeException("创建 Vue 工程目录失败", e);
         }
 
         Map<String, String> fileMap = FileBundleParser.parse(code);

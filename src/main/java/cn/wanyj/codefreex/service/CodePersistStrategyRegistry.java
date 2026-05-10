@@ -4,7 +4,7 @@ import cn.wanyj.codefreex.model.enums.CodeGenType;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
 
 /**
- * 浠ｇ爜鎸佷箙鍖栫瓥鐣ョ鐞嗗櫒
+ * 代码持久化策略管理器
  *
  * @author BanXia
  */

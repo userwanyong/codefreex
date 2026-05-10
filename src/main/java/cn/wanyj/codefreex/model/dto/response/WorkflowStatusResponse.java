@@ -5,7 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 宸ヤ綔娴佺姸鎬?
+ * 工作流状态
  *
  * @author BanXia
  */

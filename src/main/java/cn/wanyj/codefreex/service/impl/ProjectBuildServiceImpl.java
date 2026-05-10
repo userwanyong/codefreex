@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Vue 椤圭洰鏋勫缓鏈嶅姟瀹炵幇
+ * Vue 项目构建服务实现
  *
  * @author BanXia
  */
@@ -30,7 +30,7 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
     public void buildVueProject(Path generatedRootDir, Consumer<String> progressConsumer) {
         Path sourceDir = generatedRootDir.resolve("source");
         if (!Files.exists(sourceDir)) {
-            throw new RuntimeException("Vue 宸ョ▼婧愮爜鐩綍涓嶅瓨鍦?");
+            throw new RuntimeException("Vue 工程源码目录不存在");
         }
 
         if (progressConsumer != null) {
@@ -68,7 +68,7 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
                     </html>
                     """);
         } catch (IOException e) {
-            throw new RuntimeException("鍐欏叆 Vue 棰勮椤甸潰澶辫触", e);
+            throw new RuntimeException("写入 Vue 预览页面失败", e);
         }
     }
 
@@ -77,7 +77,7 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
             cleanup.filter(path -> !path.getFileName().toString().equals("source"))
                     .forEach(path -> deletePath(path));
         } catch (IOException e) {
-            throw new RuntimeException("娓呯悊 Vue 棰勮鐩綍澶辫触", e);
+            throw new RuntimeException("清理 Vue 预览目录失败", e);
         }
 
         try (var stream = Files.walk(sourceDir)) {
@@ -92,11 +92,11 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
                         Files.copy(path, target, StandardCopyOption.REPLACE_EXISTING);
                     }
                 } catch (IOException e) {
-                    throw new RuntimeException("鍚屾 Vue 鏋勫缓浜х墿澶辫触", e);
+                    throw new RuntimeException("同步 Vue 构建产物失败", e);
                 }
             });
         } catch (IOException e) {
-            throw new RuntimeException("璇诲彇 Vue 鏋勫缓浜х墿澶辫触", e);
+            throw new RuntimeException("读取 Vue 构建产物失败", e);
         }
     }
 
@@ -110,7 +110,7 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
                 Files.deleteIfExists(path);
             }
         } catch (IOException e) {
-            throw new RuntimeException("鍒犻櫎鏂囦欢澶辫触", e);
+            throw new RuntimeException("删除文件失败", e);
         }
     }
 }

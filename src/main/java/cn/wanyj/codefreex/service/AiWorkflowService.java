@@ -6,7 +6,7 @@ import org.springframework.http.codec.ServerSentEvent;
 import reactor.core.publisher.Flux;
 
 /**
- * P7 AI 宸ヤ綔娴佹湇鍔?
+ * P7 AI 工作流服务
  *
  * @author BanXia
  */

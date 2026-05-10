@@ -53,7 +53,7 @@ public class AppEditRequest {
     private List<String> tags;
 
     /**
-     * 浠ｇ爜鐢熸垚妯″紡锛歨tml / multi_file / vue
+     * 代码生成模式：html / multi_file / vue
      */
     private String codeGenType;
 }
