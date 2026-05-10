@@ -1,6 +1,7 @@
 package cn.wanyj.codefreex.service.strategy.impl;
 
 import cn.wanyj.codefreex.common.AppConstant;
+import cn.wanyj.codefreex.model.enums.CodeGenType;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,11 @@ import java.nio.file.StandardOpenOption;
 @Slf4j
 @Component
 public class HtmlSingleFileStrategy implements CodePersistStrategy {
+
+    @Override
+    public CodeGenType getCodeGenType() {
+        return CodeGenType.HTML;
+    }
 
     @Override
     public String persist(String deployKey, String code) {

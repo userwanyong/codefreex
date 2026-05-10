@@ -46,4 +46,9 @@ public class AppEditRequest {
      * 标签列表
      */
     private List<String> tags;
+
+    /**
+     * 浠ｇ爜鐢熸垚妯″紡锛歨tml / multi_file / vue
+     */
+    private String codeGenType;
 }

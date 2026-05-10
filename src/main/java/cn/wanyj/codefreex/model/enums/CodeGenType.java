@@ -1,30 +1,35 @@
 package cn.wanyj.codefreex.model.enums;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-
 /**
- * 代码生成类型枚举
+ * 浠ｇ爜鐢熸垚妯″紡
  *
- * @author wanyj
+ * @author BanXia
  */
-@Getter
-@AllArgsConstructor
 public enum CodeGenType {
 
-    HTML("html", "单文件HTML"),
-    MULTI_FILE("multi_file", "多文件项目"),
-    VUE_PROJECT("vue_project", "Vue工程项目");
+    HTML("html"),
+    MULTI_FILE("multi_file"),
+    VUE("vue");
 
     private final String value;
-    private final String desc;
 
-    public static CodeGenType fromValue(String value) {
+    CodeGenType(String value) {
+        this.value = value;
+    }
+
+    public String getValue() {
+        return value;
+    }
+
+    public static CodeGenType normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return HTML;
+        }
         for (CodeGenType type : values()) {
-            if (type.value.equals(value)) {
+            if (type.value.equalsIgnoreCase(value)) {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知的代码生成类型: " + value);
+        return HTML;
     }
 }
