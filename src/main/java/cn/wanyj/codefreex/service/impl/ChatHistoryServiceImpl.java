@@ -7,6 +7,7 @@ import cn.wanyj.codefreex.mapper.ChatHistoryMapper;
 import cn.wanyj.codefreex.model.dto.response.ChatHistoryCursorResponse;
 import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.entity.ChatHistory;
+import cn.wanyj.codefreex.model.enums.ChatMessageType;
 import cn.wanyj.codefreex.service.ChatHistoryService;
 import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
@@ -27,14 +28,14 @@ import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HIS
 public class ChatHistoryServiceImpl implements ChatHistoryService {
 
     private static final int MAX_PAGE_SIZE = 100;
-    private static final DateTimeFormatter CURSOR_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    private static final DateTimeFormatter CURSOR_TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
     private final ChatHistoryMapper chatHistoryMapper;
     private final AppMapper appMapper;
 
     @Override
     public ChatHistory saveUserMessage(Long appId, Long userId, String message) {
-        return saveMessage(appId, userId, message, "user", null);
+        return saveMessage(appId, userId, message, ChatMessageType.USER, null);
     }
 
     @Override
@@ -44,7 +45,7 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
 
     @Override
     public ChatHistory saveAiMessage(Long appId, Long userId, String message, Long parentId) {
-        return saveMessage(appId, userId, message, "ai", parentId);
+        return saveMessage(appId, userId, message, ChatMessageType.AI, parentId);
     }
 
     @Override
@@ -99,7 +100,7 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         return records;
     }
 
-    private ChatHistory saveMessage(Long appId, Long userId, String message, String messageType, Long parentId) {
+    private ChatHistory saveMessage(Long appId, Long userId, String message, ChatMessageType messageType, Long parentId) {
         checkAppOwner(appId, userId);
         validateMessage(message);
 
@@ -107,7 +108,7 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         chatHistory.setAppId(appId);
         chatHistory.setUserId(userId);
         chatHistory.setMessage(message);
-        chatHistory.setMessageType(messageType);
+        chatHistory.setMessageType(messageType.getValue());
         chatHistory.setParentId(parentId);
         chatHistoryMapper.insert(chatHistory);
         return chatHistory;

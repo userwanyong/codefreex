@@ -5,6 +5,7 @@ import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.AppMapper;
+import cn.wanyj.codefreex.mapper.ChatHistoryMapper;
 import cn.wanyj.codefreex.model.dto.request.AppCreateRequest;
 import cn.wanyj.codefreex.model.dto.request.AppEditRequest;
 import cn.wanyj.codefreex.model.dto.request.AppQueryRequest;
@@ -12,7 +13,10 @@ import cn.wanyj.codefreex.model.dto.response.AppVO;
 import cn.wanyj.codefreex.model.dto.response.FeaturedAppResponse;
 import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.enums.AppStatus;
+import cn.wanyj.codefreex.service.AppNginxService;
+import cn.wanyj.codefreex.service.AppStorageService;
 import cn.wanyj.codefreex.service.AppService;
+import cn.wanyj.codefreex.service.ChatMemoryService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +28,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static cn.wanyj.codefreex.model.entity.table.AppTableDef.APP;
+import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HISTORY;
 
 /**
  * 应用服务实现
@@ -35,6 +40,10 @@ import static cn.wanyj.codefreex.model.entity.table.AppTableDef.APP;
 public class AppServiceImpl implements AppService {
 
     private final AppMapper appMapper;
+    private final ChatHistoryMapper chatHistoryMapper;
+    private final ChatMemoryService chatMemoryService;
+    private final AppStorageService appStorageService;
+    private final AppNginxService appNginxService;
 
     private static final DateTimeFormatter CURSOR_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
@@ -90,7 +99,12 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void deleteApp(Long userId, Long appId) {
-        getAppAndCheckOwner(userId, appId);
+        App app = getAppAndCheckOwner(userId, appId);
+        chatHistoryMapper.deleteByQuery(QueryWrapper.create().where(CHAT_HISTORY.APP_ID.eq(appId)));
+        chatMemoryService.clearChatMemory(appId, userId);
+        appStorageService.deleteGeneratedFiles(app.getDeployKey());
+        appStorageService.deleteDeployedFiles(app.getDeployKey());
+        appNginxService.remove(app.getDeployKey());
         appMapper.deleteById(appId);
     }
 
@@ -232,6 +246,8 @@ public class AppServiceImpl implements AppService {
         vo.setLikeCount(app.getLikeCount());
         vo.setTags(app.getTags() != null ? app.getTags() : Collections.emptyList());
         vo.setUserId(app.getUserId());
+        vo.setInitPrompt(app.getInitPrompt());
+        vo.setDeployedTime(app.getDeployedTime());
         vo.setEditTime(app.getEditTime());
         vo.setCreateTime(app.getCreateTime());
         return vo;

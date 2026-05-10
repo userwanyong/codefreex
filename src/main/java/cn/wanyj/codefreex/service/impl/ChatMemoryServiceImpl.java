@@ -2,6 +2,7 @@ package cn.wanyj.codefreex.service.impl;
 
 import cn.wanyj.codefreex.common.AppConstant;
 import cn.wanyj.codefreex.model.entity.ChatHistory;
+import cn.wanyj.codefreex.model.enums.ChatMessageType;
 import cn.wanyj.codefreex.service.ChatHistoryService;
 import cn.wanyj.codefreex.service.ChatMemoryService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -89,8 +90,10 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
             if (value == null || value.isBlank()) {
                 return null;
             }
-            return objectMapper.readValue(value, new TypeReference<>() {
+            List<MemoryMessage> messages = objectMapper.readValue(value, new TypeReference<>() {
             });
+            messages.forEach(message -> ChatMessageType.fromValue(message.getType()));
+            return messages;
         } catch (Exception e) {
             log.warn("从 Redis 加载对话记忆失败，memoryId={}", memoryId, e);
             return null;
@@ -107,7 +110,8 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
     }
 
     private MemoryMessage toMemoryMessage(ChatHistory history) {
-        return new MemoryMessage(history.getMessageType(), history.getMessage());
+        ChatMessageType messageType = ChatMessageType.fromValue(history.getMessageType());
+        return new MemoryMessage(messageType.getValue(), history.getMessage());
     }
 
     private String buildMemoryId(Long appId, Long userId) {
@@ -115,7 +119,8 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
     }
 
     private static ChatMessage toChatMessage(MemoryMessage message) {
-        if ("ai".equalsIgnoreCase(message.getType())) {
+        ChatMessageType messageType = ChatMessageType.fromValue(message.getType());
+        if (messageType == ChatMessageType.AI) {
             return AiMessage.from(message.getText());
         }
         return UserMessage.from(message.getText());
@@ -123,10 +128,10 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
 
     private static MemoryMessage toMemoryMessage(ChatMessage message) {
         if (message instanceof AiMessage aiMessage) {
-            return new MemoryMessage("ai", aiMessage.text());
+            return new MemoryMessage(ChatMessageType.AI.getValue(), aiMessage.text());
         }
         if (message instanceof UserMessage userMessage) {
-            return new MemoryMessage("user", userMessage.singleText());
+            return new MemoryMessage(ChatMessageType.USER.getValue(), userMessage.singleText());
         }
         return null;
     }

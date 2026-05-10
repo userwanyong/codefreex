@@ -1,0 +1,65 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=FALSE
+    username: sa
+    password:
+  sql:
+    init:
+      schema-locations: classpath:schema-h2.sql
+      data-locations: classpath:data-h2.sql
+      mode: always
+  session:
+    store-type: none
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.session.data.redis.RedisHttpSessionConfiguration
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboRelaxedBinding2AutoConfiguration
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboTripleAutoConfiguration
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboAutoConfiguration
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboRelaxedBindingAutoConfiguration
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboListenerAutoConfiguration
+      - org.redisson.spring.starter.RedissonAutoConfigurationV2
+
+dubbo:
+  enabled: false
+  consumer:
+    check: false
+  registry:
+    address: N/A
+  application:
+    register-consumer: false
+    startup-report: false
+
+server:
+  port: 0
+
+mybatis-flex:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    logic-delete-column: is_delete
+
+ai:
+  prompts-dir: classpath:prompts/
+  review:
+    api-key: test-key
+    base-url: http://localhost:9999
+    model-name: test-model
+
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      api-key: test-key
+      base-url: http://localhost:9999
+      model-name: test-model
+app:
+  nginx:
+    enabled: false
+    reload-on-deploy: false
+  screenshot:
+    enabled: false

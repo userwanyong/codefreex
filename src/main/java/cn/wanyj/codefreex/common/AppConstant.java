@@ -26,4 +26,8 @@ public interface AppConstant {
      * 代码部署根目录
      */
     String CODE_DEPLOY_ROOT_DIR = System.getProperty("user.dir") + "/tmp/code_deploy";
+
+    String CODE_DOWNLOAD_ROOT_DIR = System.getProperty("user.dir") + "/tmp/code_download";
+
+    String CODE_NGINX_ROOT_DIR = System.getProperty("user.dir") + "/tmp/nginx";
 }
