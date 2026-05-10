@@ -36,8 +36,12 @@ public class AppDeployServiceImpl implements AppDeployService {
     @Override
     public AppDeployResponse deployApp(Long userId, Long appId) {
         App app = getOwnedApp(userId, appId);
-        if (!AppStatus.GENERATED.getValue().equals(app.getStatus())) {
-            throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅已生成应用可部署");
+        String status = app.getStatus();
+        if (!AppStatus.GENERATED.getValue().equals(status) && !AppStatus.DEPLOYED.getValue().equals(status)) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅已生成或已部署应用可部署");
+        }
+        if (app.getIsPublic() == null || app.getIsPublic() != 1) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅公开应用可部署");
         }
 
         appStorageService.copyGeneratedToDeployed(app.getDeployKey());

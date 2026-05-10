@@ -91,7 +91,7 @@ public class AiGenServiceImpl implements AiGenService {
                     fullResponse.append(partialToken);
                     try {
                         String json = objectMapper.writeValueAsString(
-                                new SseMessage("ai_response", partialToken));
+                                new SseMessage("ai_r", partialToken));
                         sink.next(ServerSentEvent.<String>builder().data(json).build());
                     } catch (Exception e) {
                         log.error("SSE 消息序列化失败", e);

@@ -29,6 +29,8 @@ public class AppVO {
 
     private String status;
 
+    private String deployKey;
+
     private Integer isPublic;
 
     private Integer isFeatured;

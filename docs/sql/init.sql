@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS app
 CREATE TABLE IF NOT EXISTS chat_history
 (
     id           BIGINT                             COMMENT 'id' PRIMARY KEY,
-    message      TEXT                               NOT NULL COMMENT '消息',
+    message      MEDIUMTEXT                         NOT NULL COMMENT '消息',
     parent_id    BIGINT                             NULL COMMENT '父消息id（上下文关联）',
     message_type VARCHAR(32)                        NOT NULL COMMENT '消息类型（user/ai）',
     app_id       BIGINT                             NOT NULL COMMENT '应用id',
