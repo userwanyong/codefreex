@@ -13,6 +13,7 @@ import cn.wanyj.codefreex.model.dto.response.AppVO;
 import cn.wanyj.codefreex.model.dto.response.FeaturedAppResponse;
 import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.enums.AppStatus;
+import cn.wanyj.codefreex.model.enums.CodeGenType;
 import cn.wanyj.codefreex.service.AppNginxService;
 import cn.wanyj.codefreex.service.AppStorageService;
 import cn.wanyj.codefreex.service.AppService;
@@ -57,6 +58,7 @@ public class AppServiceImpl implements AppService {
         app.setUserId(userId);
         app.setDeployKey("DK_" + IdUtil.getSnowflakeNextIdStr());
         app.setStatus(AppStatus.DRAFT.getValue());
+        app.setCodeGenType(CodeGenType.normalize(request.getCodeGenType()).getValue());
         app.setIsPublic(0);
         app.setIsFeatured(0);
         app.setPriority(0);
@@ -78,6 +80,7 @@ public class AppServiceImpl implements AppService {
                 .set(APP.INIT_PROMPT, request.getInitPrompt(), request.getInitPrompt() != null)
                 .set(APP.IS_PUBLIC, request.getIsPublic(), request.getIsPublic() != null)
                 .set(APP.TAGS, request.getTags(), request.getTags() != null)
+                .set(APP.CODE_GEN_TYPE, CodeGenType.normalize(request.getCodeGenType()).getValue(), request.getCodeGenType() != null)
                 .set(APP.EDIT_TIME, LocalDateTime.now())
                 .update();
 

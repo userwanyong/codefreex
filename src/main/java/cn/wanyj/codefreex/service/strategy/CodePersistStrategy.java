@@ -1,5 +1,7 @@
 package cn.wanyj.codefreex.service.strategy;
 
+import cn.wanyj.codefreex.model.enums.CodeGenType;
+
 /**
  * 代码持久化策略接口
  * <p>
@@ -8,6 +10,10 @@ package cn.wanyj.codefreex.service.strategy;
  * @author wanyj
  */
 public interface CodePersistStrategy {
+
+    default CodeGenType getCodeGenType() {
+        return CodeGenType.HTML;
+    }
 
     /**
      * 将 AI 生成的代码持久化到文件系统

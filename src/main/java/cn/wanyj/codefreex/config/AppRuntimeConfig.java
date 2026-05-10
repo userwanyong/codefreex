@@ -27,6 +27,12 @@ public class AppRuntimeConfig {
     }
 
     @Bean
+    @ConfigurationProperties(prefix = "app.workflow")
+    public WorkflowProperties workflowProperties() {
+        return new WorkflowProperties();
+    }
+
+    @Bean
     public DeployAccessProperties deployAccessProperties(ServerProperties serverProperties) {
         return new DeployAccessProperties(serverProperties);
     }
@@ -50,6 +56,14 @@ public class AppRuntimeConfig {
         private String browserBinaryPath;
         private int width = 1440;
         private int height = 900;
+    }
+
+    @Data
+    public static class WorkflowProperties {
+        private int maxQualityRetry = 2;
+        private boolean vueBuildEnabled = true;
+        private String npmCommand = "npm";
+        private boolean imageFetchEnabled = false;
     }
 
     public static class DeployAccessProperties {

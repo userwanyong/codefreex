@@ -63,3 +63,8 @@ app:
     reload-on-deploy: false
   screenshot:
     enabled: false
+  workflow:
+    max-quality-retry: 2
+    vue-build-enabled: false
+    npm-command: npm
+    image-fetch-enabled: false

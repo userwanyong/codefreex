@@ -61,3 +61,8 @@ app:
     browser: edge
     page-load-timeout-seconds: 20
     render-wait-millis: 1500
+  workflow:
+    max-quality-retry: 2
+    vue-build-enabled: true
+    npm-command: npm
+    image-fetch-enabled: false
