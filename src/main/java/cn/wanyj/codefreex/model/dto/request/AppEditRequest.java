@@ -43,6 +43,11 @@ public class AppEditRequest {
     private String initPrompt;
 
     /**
+     * 是否公开（0-私有，1-公开）
+     */
+    private Integer isPublic;
+
+    /**
      * 标签列表
      */
     private List<String> tags;

@@ -76,6 +76,7 @@ public class AppServiceImpl implements AppService {
                 .set(APP.DESCRIPTION, request.getDescription(), request.getDescription() != null)
                 .set(APP.COVER, request.getCover(), request.getCover() != null)
                 .set(APP.INIT_PROMPT, request.getInitPrompt(), request.getInitPrompt() != null)
+                .set(APP.IS_PUBLIC, request.getIsPublic(), request.getIsPublic() != null)
                 .set(APP.TAGS, request.getTags(), request.getTags() != null)
                 .set(APP.EDIT_TIME, LocalDateTime.now())
                 .update();
@@ -247,6 +248,7 @@ public class AppServiceImpl implements AppService {
         vo.setTags(app.getTags() != null ? app.getTags() : Collections.emptyList());
         vo.setUserId(app.getUserId());
         vo.setInitPrompt(app.getInitPrompt());
+        vo.setDeployKey(app.getDeployKey());
         vo.setDeployedTime(app.getDeployedTime());
         vo.setEditTime(app.getEditTime());
         vo.setCreateTime(app.getCreateTime());
