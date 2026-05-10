@@ -80,6 +80,18 @@ public class AppServiceImpl implements AppService {
                 .set(APP.TAGS, request.getTags(), request.getTags() != null)
                 .set(APP.EDIT_TIME, LocalDateTime.now())
                 .update();
+
+        // 编辑后将已部署应用设为私有时，自动取消部署
+        if (request.getIsPublic() != null && request.getIsPublic() == 0
+                && AppStatus.DEPLOYED.getValue().equals(app.getStatus())) {
+            appStorageService.deleteDeployedFiles(app.getDeployKey());
+            appNginxService.remove(app.getDeployKey());
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(app.getId()))
+                    .set(APP.STATUS, AppStatus.GENERATED.getValue())
+                    .set(APP.DEPLOYED_TIME, null)
+                    .update();
+        }
     }
 
     @Override

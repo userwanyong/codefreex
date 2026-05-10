@@ -64,7 +64,8 @@ public class AiGenServiceImpl implements AiGenService {
         Long userId = UserContext.getLoginUserId();
         App app = checkAppAndOwner(appId, userId);
 
-        // 2. 更新应用状态为生成中
+        // 2. 记录当前状态，仅在代码变更时更新
+        String previousStatus = app.getStatus();
         updateAppStatus(appId, AppStatus.GENERATING.getValue());
 
         String deployKey = app.getDeployKey();
@@ -102,7 +103,34 @@ public class AiGenServiceImpl implements AiGenService {
                 public void onCompleteResponse(ChatResponse response) {
                     // 流式结束，保存代码并发送 done 事件
                     try {
+                        // 优先使用流式收集的文本，兜底使用 ChatResponse 中的完整文本
                         String fullText = fullResponse.toString();
+                        log.debug("应用 {} 流式收集文本长度: {}", appId, fullText.length());
+                        if (response != null) {
+                            log.debug("应用 {} ChatResponse: aiMessage={}, hasContent={}",
+                                    appId, response.aiMessage(), response.aiMessage() != null && response.aiMessage().text() != null);
+                        }
+                        if ((fullText == null || fullText.isBlank()) && response != null && response.aiMessage() != null) {
+                            fullText = response.aiMessage().text();
+                        }
+
+                        // AI 回复为空，回滚用户消息，避免连续 user 消息损坏对话历史
+                        if (fullText == null || fullText.isBlank()) {
+                            log.warn("应用 {} AI 回复内容为空，回滚用户消息并清理缓存", appId);
+                            try {
+                                chatHistoryService.deleteById(userHistory.getId());
+                                chatMemoryService.clearChatMemory(appId, userId);
+                            } catch (Exception rollbackError) {
+                                log.error("回滚用户消息失败: appId={}", appId, rollbackError);
+                            }
+                            updateAppStatus(appId, previousStatus);
+                            sink.next(ServerSentEvent.<String>builder()
+                                    .data(objectMapper.writeValueAsString(new SseMessage("error", "AI 暂时无法回复，请稍后重试")))
+                                    .build());
+                            sink.complete();
+                            return;
+                        }
+
                         String code = extractHtmlCode(fullText);
 
                         if (code != null && !code.isEmpty()) {
@@ -110,10 +138,9 @@ public class AiGenServiceImpl implements AiGenService {
                             updateAppStatus(appId, AppStatus.GENERATED.getValue());
                             log.info("应用 {} 代码生成完成", appId);
                         } else {
-                            // AI 没有返回有效的代码块，保存完整响应
-                            log.warn("应用 {} AI 未返回有效的 HTML 代码块，保存完整响应", appId);
-                            htmlSingleFileStrategy.persist(deployKey, fullText);
-                            updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                            // AI 未返回代码块，属于普通对话，不覆盖文件，恢复原状态
+                            updateAppStatus(appId, previousStatus);
+                            log.info("应用 {} 本次对话无代码变更，保持原有文件", appId);
                         }
 
                         chatHistoryService.saveAiMessage(appId, userId, fullText, userHistory.getId());
@@ -123,13 +150,12 @@ public class AiGenServiceImpl implements AiGenService {
                         sink.next(ServerSentEvent.<String>builder().data(doneJson).build());
                     } catch (Exception e) {
                         log.error("保存生成代码失败: appId={}", appId, e);
-                        updateAppStatus(appId, AppStatus.DRAFT.getValue());
-                        String errorText = "【生成失败】" + e.getMessage();
+                        updateAppStatus(appId, previousStatus);
+                        // 不再将错误信息写入对话历史，避免污染上下文导致后续对话损坏
                         try {
-                            chatHistoryService.saveAiMessage(appId, userId, errorText, userHistory.getId());
-                            chatMemory.add(AiMessage.from(errorText));
-                        } catch (Exception historyError) {
-                            log.error("保存失败消息到历史记录失败: appId={}", appId, historyError);
+                            chatHistoryService.deleteById(userHistory.getId());
+                        } catch (Exception rollbackError) {
+                            log.error("回滚用户消息失败: appId={}", appId, rollbackError);
                         }
                         try {
                             String errorJson = objectMapper.writeValueAsString(
@@ -146,13 +172,12 @@ public class AiGenServiceImpl implements AiGenService {
                 @Override
                 public void onError(Throwable error) {
                     log.error("AI 流式生成失败: appId={}", appId, error);
-                    updateAppStatus(appId, AppStatus.DRAFT.getValue());
-                    String errorText = "【生成异常】" + error.getMessage();
+                    updateAppStatus(appId, previousStatus);
+                    // 不再将错误信息写入对话历史，回滚用户消息
                     try {
-                        chatHistoryService.saveAiMessage(appId, userId, errorText, userHistory.getId());
-                        chatMemory.add(AiMessage.from(errorText));
-                    } catch (Exception historyError) {
-                        log.error("保存异常消息到历史记录失败: appId={}", appId, historyError);
+                        chatHistoryService.deleteById(userHistory.getId());
+                    } catch (Exception rollbackError) {
+                        log.error("回滚用户消息失败: appId={}", appId, rollbackError);
                     }
                     try {
                         String errorJson = objectMapper.writeValueAsString(
