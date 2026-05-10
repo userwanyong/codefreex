@@ -90,6 +90,20 @@ class ChatMemoryServiceImplTest {
     }
 
     @Test
+    void getChatMemory_invalidRedisPayload_fallsBackToDb() {
+        when(valueOperations.get(anyString())).thenReturn("[{\"type\":\"unknown\",\"text\":\"bad data\"}]");
+        when(chatHistoryService.listRecentMessages(appId, userId, 20)).thenReturn(List.of(
+                TestDataFactory.createChatHistory(1L, appId, userId, "user", "db msg", LocalDateTime.now())
+        ));
+
+        ChatMemory memory = chatMemoryService.getChatMemory(appId, userId, systemPrompt);
+
+        assertThat(memory.messages()).hasSize(2);
+        verify(chatHistoryService).listRecentMessages(appId, userId, 20);
+        verify(valueOperations).set(anyString(), anyString(), eq(30L), eq(TimeUnit.MINUTES));
+    }
+
+    @Test
     void getChatMemory_secondCall_returnsCachedFromCaffeine() {
         // First call: Redis null, DB returns data
         when(valueOperations.get(anyString())).thenReturn(null);

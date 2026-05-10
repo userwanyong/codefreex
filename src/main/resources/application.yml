@@ -51,3 +51,13 @@ ai:
     temperature: 0.3
     max-tokens: 2048
   prompts-dir: classpath:prompts/
+app:
+  nginx:
+    enabled: false
+    reload-on-deploy: false
+    server-name-suffix: .local
+  screenshot:
+    enabled: true
+    browser: edge
+    page-load-timeout-seconds: 20
+    render-wait-millis: 1500

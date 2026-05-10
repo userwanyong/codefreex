@@ -141,6 +141,31 @@ class ChatHistoryServiceIntegrationTest {
         assertThat(response.getRecords()).hasSize(3);
     }
 
+    @Test
+    void listChatHistory_cursorPagination_noDuplicateAndNoMissingAcrossPages() {
+        for (int i = 0; i < 7; i++) {
+            chatHistoryService.saveUserMessage(appId, userId, "msg" + i);
+        }
+
+        Set<Long> messageIds = new HashSet<>();
+        List<String> messages = new ArrayList<>();
+        String cursor = null;
+        boolean hasNext;
+
+        do {
+            ChatHistoryCursorResponse response = chatHistoryService.listChatHistory(appId, userId, cursor, 3);
+            response.getRecords().forEach(record -> {
+                messageIds.add(record.getId());
+                messages.add(record.getMessage());
+            });
+            cursor = response.getNextCursor();
+            hasNext = response.isHasNext();
+        } while (hasNext);
+
+        assertThat(messageIds).hasSize(7);
+        assertThat(messages).containsExactly("msg4", "msg5", "msg6", "msg1", "msg2", "msg3", "msg0");
+    }
+
     // ========== listRecentMessages ==========
 
     @Test

@@ -57,3 +57,9 @@ langchain4j:
       api-key: test-key
       base-url: http://localhost:9999
       model-name: test-model
+app:
+  nginx:
+    enabled: false
+    reload-on-deploy: false
+  screenshot:
+    enabled: false
