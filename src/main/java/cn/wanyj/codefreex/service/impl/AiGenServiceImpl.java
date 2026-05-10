@@ -1,16 +1,21 @@
 package cn.wanyj.codefreex.service.impl;
 
 import cn.wanyj.codefreex.config.AiConfig;
+import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.AppMapper;
 import cn.wanyj.codefreex.model.dto.response.PromptReviewResult;
+import cn.wanyj.codefreex.model.entity.ChatHistory;
 import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.enums.AppStatus;
 import cn.wanyj.codefreex.service.AiGenService;
 import cn.wanyj.codefreex.service.AppService;
+import cn.wanyj.codefreex.service.ChatHistoryService;
+import cn.wanyj.codefreex.service.ChatMemoryService;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -45,6 +50,8 @@ public class AiGenServiceImpl implements AiGenService {
     private final CodePersistStrategy htmlSingleFileStrategy;
     private final AppMapper appMapper;
     private final AppService appService;
+    private final ChatHistoryService chatHistoryService;
+    private final ChatMemoryService chatMemoryService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -54,11 +61,8 @@ public class AiGenServiceImpl implements AiGenService {
 
     @Override
     public Flux<ServerSentEvent<String>> chatToGenCode(Long appId, String userMessage) {
-        // 1. 校验应用存在
-        App app = appMapper.selectOneById(appId);
-        if (app == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "应用不存在");
-        }
+        Long userId = UserContext.getLoginUserId();
+        App app = checkAppAndOwner(appId, userId);
 
         // 2. 更新应用状态为生成中
         updateAppStatus(appId, AppStatus.GENERATING.getValue());
@@ -67,6 +71,9 @@ public class AiGenServiceImpl implements AiGenService {
 
         // 3. 获取系统提示词
         String systemPrompt = promptLoader.load("html_single.txt");
+        ChatHistory userHistory = chatHistoryService.saveUserMessage(appId, userId, userMessage);
+        var chatMemory = chatMemoryService.getChatMemory(appId, userId, systemPrompt);
+        chatMemory.add(UserMessage.from(userMessage));
 
         // 4. 从 Spring 容器获取多例 StreamingChatModel
         StreamingChatModel streamingModel = applicationContext.getBean(StreamingChatModel.class);
@@ -75,8 +82,7 @@ public class AiGenServiceImpl implements AiGenService {
             StringBuilder fullResponse = new StringBuilder();
 
             List<ChatMessage> messages = new ArrayList<>();
-            messages.add(SystemMessage.from(systemPrompt));
-            messages.add(UserMessage.from(userMessage));
+            messages.addAll(chatMemory.messages());
 
             streamingModel.chat(messages, new dev.langchain4j.model.chat.response.StreamingChatResponseHandler() {
 
@@ -110,11 +116,21 @@ public class AiGenServiceImpl implements AiGenService {
                             updateAppStatus(appId, AppStatus.GENERATED.getValue());
                         }
 
+                        chatHistoryService.saveAiMessage(appId, userId, fullText, userHistory.getId());
+                        chatMemory.add(AiMessage.from(fullText));
+
                         String doneJson = objectMapper.writeValueAsString(new SseMessage("done", ""));
                         sink.next(ServerSentEvent.<String>builder().data(doneJson).build());
                     } catch (Exception e) {
                         log.error("保存生成代码失败: appId={}", appId, e);
                         updateAppStatus(appId, AppStatus.DRAFT.getValue());
+                        String errorText = "【生成失败】" + e.getMessage();
+                        try {
+                            chatHistoryService.saveAiMessage(appId, userId, errorText, userHistory.getId());
+                            chatMemory.add(AiMessage.from(errorText));
+                        } catch (Exception historyError) {
+                            log.error("保存失败消息到历史记录失败: appId={}", appId, historyError);
+                        }
                         try {
                             String errorJson = objectMapper.writeValueAsString(
                                     new SseMessage("error", "代码保存失败: " + e.getMessage()));
@@ -131,6 +147,13 @@ public class AiGenServiceImpl implements AiGenService {
                 public void onError(Throwable error) {
                     log.error("AI 流式生成失败: appId={}", appId, error);
                     updateAppStatus(appId, AppStatus.DRAFT.getValue());
+                    String errorText = "【生成异常】" + error.getMessage();
+                    try {
+                        chatHistoryService.saveAiMessage(appId, userId, errorText, userHistory.getId());
+                        chatMemory.add(AiMessage.from(errorText));
+                    } catch (Exception historyError) {
+                        log.error("保存异常消息到历史记录失败: appId={}", appId, historyError);
+                    }
                     try {
                         String errorJson = objectMapper.writeValueAsString(
                                 new SseMessage("error", "AI 生成失败: " + error.getMessage()));
@@ -215,6 +238,17 @@ public class AiGenServiceImpl implements AiGenService {
         } catch (Exception e) {
             log.error("更新应用状态失败: appId={}, status={}", appId, status, e);
         }
+    }
+
+    private App checkAppAndOwner(Long appId, Long userId) {
+        App app = appMapper.selectOneById(appId);
+        if (app == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "应用不存在");
+        }
+        if (userId == null || !userId.equals(app.getUserId())) {
+            throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "无权限操作该应用");
+        }
+        return app;
     }
 
     /**
