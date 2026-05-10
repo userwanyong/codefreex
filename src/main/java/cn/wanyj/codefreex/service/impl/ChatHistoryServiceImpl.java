@@ -100,6 +100,18 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         return records;
     }
 
+    @Override
+    public void deleteById(Long id) {
+        chatHistoryMapper.deleteById(id);
+    }
+
+    @Override
+    public void deleteByAppId(Long appId) {
+        QueryWrapper query = QueryWrapper.create()
+                .where(CHAT_HISTORY.APP_ID.eq(appId));
+        chatHistoryMapper.deleteByQuery(query);
+    }
+
     private ChatHistory saveMessage(Long appId, Long userId, String message, ChatMessageType messageType, Long parentId) {
         checkAppOwner(appId, userId);
         validateMessage(message);

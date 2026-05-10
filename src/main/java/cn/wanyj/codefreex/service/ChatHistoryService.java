@@ -34,4 +34,14 @@ public interface ChatHistoryService {
      * 查询最近的历史消息（按时间正序返回）
      */
     List<ChatHistory> listRecentMessages(Long appId, Long userId, int limit);
+
+    /**
+     * 删除指定消息
+     */
+    void deleteById(Long id);
+
+    /**
+     * 删除指定应用的所有对话历史
+     */
+    void deleteByAppId(Long appId);
 }
