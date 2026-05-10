@@ -41,7 +41,11 @@ public class AppDeployServiceImpl implements AppDeployService {
             throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅已生成或已部署应用可部署");
         }
         if (app.getIsPublic() == null || app.getIsPublic() != 1) {
-            throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅公开应用可部署");
+            // 未公开的应用，部署时自动设为公开
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.IS_PUBLIC, 1)
+                    .update();
         }
 
         appStorageService.copyGeneratedToDeployed(app.getDeployKey());
