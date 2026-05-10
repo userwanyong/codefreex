@@ -5,16 +5,16 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
- * P7 宸ヤ綔娴佺敓鎴愯姹?
+ * P7 工作流生成请求
  *
  * @author BanXia
  */
 @Data
 public class WorkflowGenerateRequest {
 
-    @NotNull(message = "搴旂敤 ID 涓嶈兘涓虹┖")
+    @NotNull(message = "应用 ID 不能为空")
     private Long appId;
 
-    @NotBlank(message = "鐢熸垚鎻愮ず璇嶄笉鑳戒负绌?")
+    @NotBlank(message = "生成提示词不能为空")
     private String message;
 }

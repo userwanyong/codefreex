@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 
 /**
- * P7 SSE 浜嬩欢
+ * P7 SSE 事件
  *
  * @author BanXia
  */

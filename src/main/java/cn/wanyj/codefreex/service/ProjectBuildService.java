@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.util.function.Consumer;
 
 /**
- * 椤圭洰鏋勫缓鏈嶅姟
+ * 项目构建服务
  *
  * @author BanXia
  */

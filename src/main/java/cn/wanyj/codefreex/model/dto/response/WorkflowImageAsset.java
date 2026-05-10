@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 
 /**
- * 宸ヤ綔娴佸浘鐗囩礌鏉?
+ * 工作流图片素材
  *
  * @author BanXia
  */

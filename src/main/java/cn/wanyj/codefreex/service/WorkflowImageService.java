@@ -5,7 +5,7 @@ import cn.wanyj.codefreex.model.dto.response.WorkflowImageAsset;
 import java.util.List;
 
 /**
- * 宸ヤ綔娴佸浘鐗囩礌鏉愭湇鍔?
+ * 工作流图片素材服务
  *
  * @author BanXia
  */

@@ -1,7 +1,7 @@
 package cn.wanyj.codefreex.model.enums;
 
 /**
- * 浠ｇ爜鐢熸垚妯″紡
+ * 代码生成模式
  *
  * @author BanXia
  */

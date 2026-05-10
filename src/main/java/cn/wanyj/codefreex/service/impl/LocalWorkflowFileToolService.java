@@ -13,7 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 鏈湴鏂囦欢宸ュ叿瀹炵幇
+ * 本地文件工具实现
  *
  * @author BanXia
  */
@@ -27,7 +27,7 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
             Files.createDirectories(file.getParent());
             Files.writeString(file, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {
-            throw new RuntimeException("鍐欏叆鏂囦欢澶辫触: " + relativePath, e);
+            throw new RuntimeException("写入文件失败: " + relativePath, e);
         }
     }
 
@@ -37,11 +37,11 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
         try {
             String content = Files.readString(file);
             if (!content.contains(originalContent)) {
-                throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "鏈壘鍒板緟淇敼鍐呭");
+                throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "未找到待修改内容");
             }
             Files.writeString(file, content.replace(originalContent, newContent), StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {
-            throw new RuntimeException("淇敼鏂囦欢澶辫触: " + relativePath, e);
+            throw new RuntimeException("修改文件失败: " + relativePath, e);
         }
     }
 
@@ -51,7 +51,7 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
-            throw new RuntimeException("鍒犻櫎鏂囦欢澶辫触: " + relativePath, e);
+            throw new RuntimeException("删除文件失败: " + relativePath, e);
         }
     }
 
@@ -67,7 +67,7 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
                     .map(path -> path.toString().replace('\\', '/'))
                     .toList();
         } catch (IOException e) {
-            throw new RuntimeException("鍒楀嚭鏂囦欢澶辫触", e);
+            throw new RuntimeException("列出文件失败", e);
         }
     }
 
@@ -77,14 +77,14 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
         try {
             return Files.readString(file);
         } catch (IOException e) {
-            throw new RuntimeException("璇诲彇鏂囦欢澶辫触: " + relativePath, e);
+            throw new RuntimeException("读取文件失败: " + relativePath, e);
         }
     }
 
     private Path resolvePath(Path rootDir, String relativePath) {
         Path resolved = rootDir.resolve(relativePath).normalize();
         if (!resolved.startsWith(rootDir.normalize())) {
-            throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "闈炴硶鏂囦欢璺緞");
+            throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "非法文件路径");
         }
         return resolved;
     }

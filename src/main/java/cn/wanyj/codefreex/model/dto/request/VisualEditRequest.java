@@ -5,23 +5,23 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
- * 鍙鍖栫紪杈戣姹?
+ * 可视化编辑请求
  *
  * @author BanXia
  */
 @Data
 public class VisualEditRequest {
 
-    @NotNull(message = "搴旂敤 ID 涓嶈兘涓虹┖")
+    @NotNull(message = "应用 ID 不能为空")
     private Long appId;
 
-    @NotBlank(message = "鍏冪礌閫夋嫨鍣ㄤ笉鑳戒负绌?")
+    @NotBlank(message = "元素选择器不能为空")
     private String selector;
 
-    @NotBlank(message = "鍘熷鍏冪礌 HTML 涓嶈兘涓虹┖")
+    @NotBlank(message = "原始元素 HTML 不能为空")
     private String selectedHtml;
 
-    @NotBlank(message = "淇敼闇€姹備笉鑳戒负绌?")
+    @NotBlank(message = "修改需求不能为空")
     private String instruction;
 
     private String targetFile;

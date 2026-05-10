@@ -6,7 +6,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 澶氭枃浠朵唬鐮佽В鏋愬櫒
+ * 多文件代码解析器
  *
  * @author BanXia
  */

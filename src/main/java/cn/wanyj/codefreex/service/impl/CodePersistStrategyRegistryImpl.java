@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 浠ｇ爜鎸佷箙鍖栫瓥鐣ョ鐞嗗櫒瀹炵幇
+ * 代码持久化策略管理器实现
  *
  * @author BanXia
  */

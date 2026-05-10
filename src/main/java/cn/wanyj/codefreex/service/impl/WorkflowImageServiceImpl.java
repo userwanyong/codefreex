@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 宸ヤ綔娴佸浘鐗囩礌鏉愭湇鍔″疄鐜?
+ * 工作流图片素材服务实现
  *
  * @author BanXia
  */
