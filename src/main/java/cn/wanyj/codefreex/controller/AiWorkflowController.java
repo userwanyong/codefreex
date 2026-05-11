@@ -10,22 +10,23 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
-import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Flux;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * P7 workflow controller
+ * 工作流
  *
  * @author BanXia
  */
-@Tag(name = "AI Workflow")
+@Slf4j
+@Tag(name = "AI 工作流")
 @RestController
 @RequestMapping("/ai/workflow")
 @RequiredArgsConstructor
@@ -33,14 +34,34 @@ public class AiWorkflowController {
 
     private final AiWorkflowService aiWorkflowService;
 
-    @Operation(summary = "Trigger P7 workflow generation")
+    @Operation(summary = "AI对话工作流")
     @PostMapping(value = "/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @AuthCheck
-    public Flux<ServerSentEvent<String>> generate(@Valid @RequestBody WorkflowGenerateRequest request) {
-        return aiWorkflowService.generate(request.getAppId(), request.getMessage());
+    public SseEmitter generate(@Valid @RequestBody WorkflowGenerateRequest request) {
+        SseEmitter emitter = new SseEmitter(300_000L);
+        emitter.onTimeout(emitter::complete);
+
+        aiWorkflowService.generate(request.getAppId(), request.getMessage())
+            .subscribe(
+                event -> {
+                    try {
+                        emitter.send(SseEmitter.event().data(event.data()));
+                    } catch (Exception e) {
+                        log.warn("SSE send failed: {}", e.getMessage());
+                        emitter.completeWithError(e);
+                    }
+                },
+                error -> {
+                    log.error("Workflow stream error", error);
+                    emitter.completeWithError(error);
+                },
+                emitter::complete
+            );
+
+        return emitter;
     }
 
-    @Operation(summary = "Query workflow status")
+    @Operation(summary = "查询工作流状态")
     @GetMapping("/status")
     @AuthCheck
     public BaseResponse<WorkflowStatusResponse> getStatus(@RequestParam Long appId) {

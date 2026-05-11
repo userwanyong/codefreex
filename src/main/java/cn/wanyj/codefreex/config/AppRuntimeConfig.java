@@ -64,6 +64,8 @@ public class AppRuntimeConfig {
         private boolean vueBuildEnabled = true;
         private String npmCommand = "npm";
         private boolean imageFetchEnabled = false;
+        private String pexelsApiKey;
+        private String pixabayApiKey;
     }
 
     public static class DeployAccessProperties {
