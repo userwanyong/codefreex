@@ -262,7 +262,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         graph.addNode(NODE_ROUTE, state -> CompletableFuture.completedFuture(runRouteNode(state, app, message, userHistory, userId, sink)));
         graph.addNode(NODE_CODE_GEN, state -> CompletableFuture.completedFuture(runCodeGenNode(state, appId, userId, userHistory, sink)));
         graph.addNode(NODE_QUALITY_CHECK, state -> CompletableFuture.completedFuture(runQualityCheckNode(state, sink)));
-        graph.addNode(NODE_PERSIST, state -> CompletableFuture.completedFuture(runPersistNode(state, app, sink)));
+        graph.addNode(NODE_PERSIST, state -> CompletableFuture.completedFuture(runPersistNode(state, app, userId, userHistory, sink)));
         graph.addNode(NODE_INTENT_CLASSIFY, state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)));
         graph.addNode(NODE_CHAT_DIRECT, state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)));
         graph.addNode(NODE_FAIL, state -> CompletableFuture.completedFuture(runFailNode(state, sink)));
@@ -596,13 +596,15 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 "errorMessage", qualityCheckResult.pass() ? "" : qualityCheckResult.reason());
     }
 
-    private Map<String, Object> runPersistNode(WorkflowGraphState state, App app, FluxSink<ServerSentEvent<String>> sink) {
+    private Map<String, Object> runPersistNode(WorkflowGraphState state, App app, Long userId,
+                                                 ChatHistory userHistory, FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> persistNode 开始执行, appId={}, deployKey={}, route={}", "Workflow", app.getId(), app.getDeployKey(), state.route());
         emitToolRequest(sink, NODE_PERSIST, Map.of("route", state.route()));
         CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
         strategy.persist(app.getDeployKey(), normalizePayload(state.routeType(), state.generatedContent()));
         log.info("[{}] <<< persistNode 完成, appId={}, 代码已持久化", "Workflow", app.getId());
         emitToolExecuted(sink, NODE_PERSIST, Map.of("deployKey", app.getDeployKey(), "route", state.route()));
+        saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
         return Map.of(
                 "currentNode", NODE_PERSIST,
                 "statusMessage", "artifacts persisted");
@@ -912,6 +914,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 case NODE_CODE_GEN -> {
                     status.put("icon", "💾");
                     status.put("label", "文件写入完成");
+                    status.put("status", "done");
+                }
+                case NODE_PERSIST -> {
+                    status.put("icon", "✅");
+                    status.put("label", "生成完成");
                     status.put("status", "done");
                 }
                 default -> {
