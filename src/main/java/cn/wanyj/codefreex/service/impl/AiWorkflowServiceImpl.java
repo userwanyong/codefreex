@@ -23,16 +23,23 @@ import cn.wanyj.codefreex.service.CodePersistStrategyRegistry;
 import cn.wanyj.codefreex.service.WorkflowFileToolService;
 import cn.wanyj.codefreex.service.WorkflowImageService;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
+import cn.wanyj.codefreex.service.tools.WorkflowFileTools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.agent.tool.ToolSpecifications;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.CompileConfig;
@@ -91,6 +98,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private static final String NODE_PERSIST = "persistNode";
     private static final String NODE_INTENT_CLASSIFY = "intentClassifyNode";
     private static final String NODE_CHAT_DIRECT = "chatDirectNode";
+    private static final String NODE_CODE_FIX = "codeFixNode";
     private static final String NODE_FAIL = "failNode";
 
     private static final Map<String, Channel<?>> WORKFLOW_SCHEMA = Map.of(
@@ -188,6 +196,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 chatMemory.add(AiMessage.from(generatedContent));
 
                 appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                saveNodeMessage(appId, userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
                 log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={} =========", "Workflow", appId, finalState.route(), finalState.retryCount());
                 updateStatus(appId, "completed", NODE_PERSIST, finalState.route(),
                         finalState.retryCount(), "workflow completed");
@@ -260,9 +269,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         graph.addNode(NODE_IMAGE_FETCH, state -> CompletableFuture.completedFuture(runImageFetchNode(state, message, userHistory, userId, sink)));
         graph.addNode(NODE_PROMPT_ENHANCE, state -> CompletableFuture.completedFuture(runPromptEnhanceNode(state, app, message, userHistory, userId, sink)));
         graph.addNode(NODE_ROUTE, state -> CompletableFuture.completedFuture(runRouteNode(state, app, message, userHistory, userId, sink)));
-        graph.addNode(NODE_CODE_GEN, state -> CompletableFuture.completedFuture(runCodeGenNode(state, appId, userId, userHistory, sink)));
-        graph.addNode(NODE_QUALITY_CHECK, state -> CompletableFuture.completedFuture(runQualityCheckNode(state, sink)));
-        graph.addNode(NODE_PERSIST, state -> CompletableFuture.completedFuture(runPersistNode(state, app, userId, userHistory, sink)));
+        graph.addNode(NODE_CODE_GEN, state -> CompletableFuture.completedFuture(runCodeGenNode(state, app, userId, userHistory, sink)));
+        graph.addNode(NODE_QUALITY_CHECK, state -> CompletableFuture.completedFuture(runQualityCheckNode(state, userHistory, userId, sink)));
+        graph.addNode(NODE_CODE_FIX, state -> CompletableFuture.completedFuture(runCodeFixNode(state, app, userId, userHistory, sink)));
         graph.addNode(NODE_INTENT_CLASSIFY, state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)));
         graph.addNode(NODE_CHAT_DIRECT, state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)));
         graph.addNode(NODE_FAIL, state -> CompletableFuture.completedFuture(runFailNode(state, sink)));
@@ -286,8 +295,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         graph.addEdge(NODE_CODE_GEN, NODE_QUALITY_CHECK);
         graph.addConditionalEdges(NODE_QUALITY_CHECK,
                 state -> CompletableFuture.completedFuture(resolveQualityEdge(state)),
-                Map.of("retry", NODE_CODE_GEN, "persist", NODE_PERSIST, "failed", NODE_FAIL));
-        graph.addEdge(NODE_PERSIST, StateGraph.END);
+                Map.of("fix", NODE_CODE_FIX, "pass", StateGraph.END, "failed", NODE_FAIL));
+        graph.addEdge(NODE_CODE_FIX, NODE_QUALITY_CHECK);
         graph.addEdge(NODE_FAIL, StateGraph.END);
 
         return graph.compile(CompileConfig.builder().checkpointSaver(new MemorySaver()).build());
@@ -566,27 +575,34 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 "statusMessage", "route selected");
     }
 
-    private Map<String, Object> runCodeGenNode(WorkflowGraphState state, Long appId, Long userId,
+    private Map<String, Object> runCodeGenNode(WorkflowGraphState state, App app, Long userId,
                                                ChatHistory userHistory,
                                                FluxSink<ServerSentEvent<String>> sink) {
+        Long appId = app.getId();
         log.info("[{}] >>> codeGenNode 开始执行, appId={}, route={}, 重试次数={}", "Workflow", appId, state.route(), state.retryCount());
         emitToolRequest(sink, NODE_CODE_GEN, Map.of("route", state.route(), "retry", state.retryCount()));
         String generatedContent = generateCodeStream(appId, userId, state.enhancedPrompt(), state.routeType(), sink);
-        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}", "Workflow", appId, generatedContent.length());
-        emitToolExecuted(sink, NODE_CODE_GEN, Map.of("length", generatedContent.length(), "retry", state.retryCount()));
+
+        // 生成完成后立即写入文件
+        CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
+        strategy.persist(app.getDeployKey(), normalizePayload(state.routeType(), generatedContent));
+        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}, 已写入文件", "Workflow", appId, generatedContent.length());
+
+        emitToolExecuted(sink, NODE_CODE_GEN, Map.of("length", generatedContent.length(), "retry", state.retryCount(), "persisted", true));
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, generatedContent);
         return Map.of(
                 "generatedContent", generatedContent,
                 "currentNode", NODE_CODE_GEN,
-                "statusMessage", "code generated");
+                "statusMessage", "code generated and persisted");
     }
 
-    private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, FluxSink<ServerSentEvent<String>> sink) {
+    private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, ChatHistory userHistory, Long userId, FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> qualityCheckNode 开始执行, 当前重试次数={}", "Workflow", state.retryCount());
         emitToolRequest(sink, NODE_QUALITY_CHECK, Map.of("retry", state.retryCount()));
         QualityCheckResult qualityCheckResult = qualityCheck(state.routeType(), state.generatedContent());
         log.info("[{}] <<< qualityCheckNode 完成, 通过={}, 原因={}", "Workflow", qualityCheckResult.pass(), qualityCheckResult.reason());
         emitToolExecuted(sink, NODE_QUALITY_CHECK, qualityCheckResult);
+        saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_QUALITY_CHECK, qualityCheckResult.reason());
         int nextRetry = qualityCheckResult.pass() ? state.retryCount() : state.retryCount() + 1;
         return Map.of(
                 "qualityPass", qualityCheckResult.pass(),
@@ -594,6 +610,88 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 "currentNode", NODE_QUALITY_CHECK,
                 "statusMessage", qualityCheckResult.reason(),
                 "errorMessage", qualityCheckResult.pass() ? "" : qualityCheckResult.reason());
+    }
+
+    private Map<String, Object> runCodeFixNode(WorkflowGraphState state, App app, Long userId,
+                                                ChatHistory userHistory,
+                                                FluxSink<ServerSentEvent<String>> sink) {
+        Long appId = app.getId();
+        String fixReason = state.errorMessage();
+        log.info("[{}] >>> codeFixNode 开始执行, appId={}, 修复原因={}", "Workflow", appId, fixReason);
+        emitToolRequest(sink, NODE_CODE_FIX, Map.of("reason", fixReason, "retry", state.retryCount()));
+
+        Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, app.getDeployKey());
+        WorkflowFileTools fileTools = new WorkflowFileTools(rootDir, workflowFileToolService);
+        List<ToolSpecification> toolSpecs = ToolSpecifications.toolSpecificationsFrom(fileTools);
+
+        // 构建 system prompt
+        String systemPrompt = String.format(promptLoader.load("workflow_code_fix.txt"), fixReason);
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(SystemMessage.from(systemPrompt));
+        messages.add(UserMessage.from("请根据上述失败原因修复项目代码。先列出文件结构，再定位问题并修复。"));
+
+        // tool-calling 循环，最多 15 轮
+        int maxRounds = 15;
+        String fixSummary = "";
+        for (int round = 0; round < maxRounds; round++) {
+            ChatRequest chatRequest = ChatRequest.builder()
+                    .messages(messages)
+                    .toolSpecifications(toolSpecs)
+                    .build();
+            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            AiMessage aiMessage = chatResponse.aiMessage();
+            messages.add(aiMessage);
+
+            // 没有工具调用请求 → AI 给出了最终回复
+            if (aiMessage.hasToolExecutionRequests()) {
+                // 执行所有工具调用
+                for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
+                    log.info("[{}] codeFixNode 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
+                    String toolResult = executeToolCall(fileTools, toolRequest);
+                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
+                }
+            } else {
+                // AI 返回纯文本，修复完成
+                fixSummary = aiMessage.text();
+                break;
+            }
+        }
+
+        log.info("[{}] <<< codeFixNode 完成, appId={}, 修复摘要长度={}", "Workflow", appId, fixSummary.length());
+        emitToolExecuted(sink, NODE_CODE_FIX, Map.of("summary", fixSummary), fixSummary);
+        saveNodeMessage(appId, userId, userHistory.getId(), NODE_CODE_FIX, fixSummary);
+        return Map.of(
+                "lastFixReason", "",
+                "currentNode", NODE_CODE_FIX,
+                "statusMessage", "code fix applied");
+    }
+
+    private String executeToolCall(WorkflowFileTools fileTools, ToolExecutionRequest request) {
+        try {
+            String name = request.name();
+            String arguments = request.arguments();
+            JsonNode argsNode = objectMapper.readTree(arguments);
+
+            return switch (name) {
+                case "listFiles" -> {
+                    List<String> files = fileTools.listFiles();
+                    yield String.join("\n", files);
+                }
+                case "readFile" -> fileTools.readFile(argsNode.path("relativePath").asText(""));
+                case "writeFile" -> fileTools.writeFile(
+                        argsNode.path("relativePath").asText(""),
+                        argsNode.path("content").asText(""));
+                case "editFile" -> fileTools.editFile(
+                        argsNode.path("relativePath").asText(""),
+                        argsNode.path("originalContent").asText(""),
+                        argsNode.path("newContent").asText(""));
+                case "deleteFile" -> fileTools.deleteFile(argsNode.path("relativePath").asText(""));
+                default -> "Unknown tool: " + name;
+            };
+        } catch (Exception e) {
+            log.warn("Tool execution failed: {}, error: {}", request.name(), e.getMessage());
+            return "Tool execution error: " + e.getMessage();
+        }
     }
 
     private Map<String, Object> runPersistNode(WorkflowGraphState state, App app, Long userId,
@@ -620,12 +718,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
     private String resolveQualityEdge(WorkflowGraphState state) {
         if (state.qualityPass()) {
-            log.info("[{}] 质量检查通过, 进入持久化阶段", "Workflow");
-            return "persist";
+            log.info("[{}] 质量检查通过, 工作流完成", "Workflow");
+            return "pass";
         }
         if (state.retryCount() <= workflowProperties.getMaxQualityRetry()) {
-            log.warn("[{}] 质量检查未通过, 开始第{}次重试", "Workflow", state.retryCount());
-            return "retry";
+            log.warn("[{}] 质量检查未通过, 进入修复阶段 (第{}次)", "Workflow", state.retryCount());
+            return "fix";
         }
         log.error("[{}] 质量检查重试次数耗尽({}), 进入失败节点", "Workflow", state.retryCount());
         return "failed";
@@ -923,6 +1021,19 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     status.put("detail", "已完成");
                     status.put("status", "done");
                 }
+                case NODE_QUALITY_CHECK -> {
+                    status.put("icon", "🔍");
+                    status.put("label", "代码质量检查");
+                    boolean passed = content.toLowerCase().contains("ok") || content.toLowerCase().contains("pass");
+                    status.put("detail", passed ? "通过" : "未通过");
+                    status.put("status", passed ? "done" : "warning");
+                }
+                case NODE_CODE_FIX -> {
+                    status.put("icon", "🔧");
+                    status.put("label", "修复代码");
+                    status.put("detail", "修复完成");
+                    status.put("status", "done");
+                }
                 case NODE_PERSIST -> {
                     status.put("icon", "✅");
                     status.put("label", "生成完成");
@@ -1116,6 +1227,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         String chatResponse() {
             return value("chatResponse", "");
+        }
+
+        String lastFixReason() {
+            return value("lastFixReason", "");
         }
 
         String errorMessageOr(String fallback) {
