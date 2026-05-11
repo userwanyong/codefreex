@@ -870,13 +870,15 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 case NODE_PROMPT_REVIEW -> {
                     status.put("icon", "🛡️");
                     boolean passed = content.toLowerCase().contains("passed");
-                    status.put("label", passed ? "安全审查通过" : "安全审查未通过");
+                    status.put("label", "检查内容安全性");
+                    status.put("detail", passed ? "通过" : "未通过");
                     status.put("status", passed ? "done" : "error");
                 }
                 case NODE_INTENT_CLASSIFY -> {
                     status.put("icon", "🔍");
                     boolean isCoding = content.contains("编码");
-                    status.put("label", isCoding ? "编码任务，进入开发流程" : "普通对话，直接回复");
+                    status.put("label", "分析用户意图");
+                    status.put("detail", isCoding ? "开发任务" : "普通对话");
                     status.put("status", "done");
                 }
                 case NODE_CHAT_DIRECT -> {
@@ -886,39 +888,45 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 }
                 case NODE_PRD_GEN -> {
                     status.put("icon", "📋");
-                    status.put("label", "需求文档已生成");
+                    status.put("label", "生成需求文档");
                     status.put("detail", "PRD.md");
                     status.put("downloadAction", "prd");
                     status.put("status", "done");
                 }
                 case NODE_IMAGE_PLAN -> {
                     status.put("icon", "🖼️");
-                    status.put("label", "图片规划完成");
+                    status.put("label", "规划图片资源");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 case NODE_IMAGE_FETCH -> {
-                    status.put("icon", "🔍");
-                    status.put("label", "图片素材已获取");
+                    status.put("icon", "🖼️");
+                    status.put("label", "获取图片素材");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 case NODE_PROMPT_ENHANCE -> {
                     status.put("icon", "✨");
-                    status.put("label", "提示词增强完成");
+                    status.put("label", "优化提示词");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 case NODE_ROUTE -> {
                     status.put("icon", "🎯");
-                    status.put("label", "生成方案: " + content.replace("Route: ", ""));
+                    status.put("label", "确定生成方案");
+                    status.put("detail", content.replace("Route: ", ""));
                     status.put("status", "done");
                 }
                 case NODE_CODE_GEN -> {
-                    status.put("icon", "💾");
-                    status.put("label", "文件写入完成");
+                    status.put("icon", "💻");
+                    status.put("label", "编写代码");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 case NODE_PERSIST -> {
                     status.put("icon", "✅");
                     status.put("label", "生成完成");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 default -> {
