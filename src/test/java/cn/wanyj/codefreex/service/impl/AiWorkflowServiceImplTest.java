@@ -4,7 +4,6 @@ import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.config.AiConfig;
 import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.mapper.AppMapper;
-import cn.wanyj.codefreex.model.dto.request.VisualEditRequest;
 import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.entity.ChatHistory;
 import cn.wanyj.codefreex.service.AppService;
@@ -178,37 +177,6 @@ class AiWorkflowServiceImplTest {
         }
 
         assertThat(counter.get()).isEqualTo(2);
-    }
-
-    @Test
-    void visualEdit_updatesTargetFile() {
-        mockApp("html");
-        VisualEditRequest request = new VisualEditRequest();
-        request.setAppId(appId);
-        request.setSelector("#hero");
-        request.setSelectedHtml("<section id=\"hero\"></section>");
-        request.setInstruction("add title");
-        request.setTargetFile("index.html");
-
-        when(workflowFileToolService.readFile(any(), eq("index.html")))
-                .thenReturn("<section id=\"hero\"></section>");
-        when(promptLoader.load("workflow_visual_edit.txt")).thenReturn("edit");
-        ChatResponse response = ChatResponse.builder()
-                .aiMessage(AiMessage.from("<section id=\"hero\"><h1>Title</h1></section>"))
-                .build();
-        when(reviewChatModel.chat(any(UserMessage.class))).thenReturn(response);
-
-        try (var ignored = UserContextTestHelper.withUserId(userId)) {
-            StepVerifier.create(aiWorkflowService.visualEdit(request))
-                    .assertNext(event -> assertThat(eventType(event)).isEqualTo("tool_request"))
-                    .assertNext(event -> assertThat(eventType(event)).isEqualTo("ai_response"))
-                    .assertNext(event -> assertThat(eventType(event)).isEqualTo("tool_executed"))
-                    .assertNext(event -> assertThat(eventType(event)).isEqualTo("done"))
-                    .verifyComplete();
-        }
-
-        verify(workflowFileToolService).writeFile(any(), eq("index.html"),
-                eq("<section id=\"hero\"><h1>Title</h1></section>"));
     }
 
     private void mockApp(String codeGenType) {

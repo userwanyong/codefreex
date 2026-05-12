@@ -7,7 +7,6 @@ import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.AppMapper;
-import cn.wanyj.codefreex.model.dto.request.VisualEditRequest;
 import cn.wanyj.codefreex.model.dto.response.WorkflowEvent;
 import cn.wanyj.codefreex.model.dto.response.WorkflowImageAsset;
 import cn.wanyj.codefreex.model.dto.response.WorkflowStatusResponse;
@@ -15,38 +14,24 @@ import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.entity.ChatHistory;
 import cn.wanyj.codefreex.model.enums.AppStatus;
 import cn.wanyj.codefreex.model.enums.CodeGenType;
-import cn.wanyj.codefreex.service.AiWorkflowService;
-import cn.wanyj.codefreex.service.AppService;
-import cn.wanyj.codefreex.service.ChatHistoryService;
-import cn.wanyj.codefreex.service.ChatMemoryService;
-import cn.wanyj.codefreex.service.CodePersistStrategyRegistry;
-import cn.wanyj.codefreex.service.WorkflowFileToolService;
-import cn.wanyj.codefreex.service.WorkflowImageService;
+import cn.wanyj.codefreex.service.*;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
 import cn.wanyj.codefreex.service.tools.WorkflowFileTools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.agent.tool.ToolSpecifications;
+import dev.langchain4j.data.message.*;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
-import dev.langchain4j.agent.tool.ToolExecutionRequest;
-import dev.langchain4j.agent.tool.ToolSpecification;
-import dev.langchain4j.agent.tool.ToolSpecifications;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bsc.langgraph4j.CompileConfig;
-import org.bsc.langgraph4j.CompiledGraph;
-import org.bsc.langgraph4j.NodeOutput;
-import org.bsc.langgraph4j.RunnableConfig;
-import org.bsc.langgraph4j.StateGraph;
+import org.bsc.langgraph4j.*;
 import org.bsc.langgraph4j.checkpoint.MemorySaver;
 import org.bsc.langgraph4j.state.AgentState;
 import org.bsc.langgraph4j.state.Channel;
@@ -57,6 +42,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -86,6 +72,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             "rm -rf", "ddos", "sqlmap", "xss payload", "webshell",
             "ransomware", "trojan", "backdoor", "credential stuffing");
 
+    private static final java.util.Set<String> VOID_TAGS = java.util.Set.of(
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr");
+    private static final Pattern TAG_NAME_PATTERN = Pattern.compile("^<([a-zA-Z][a-zA-Z0-9]*)");
+
     private static final String NODE_PROMPT_GUARD = "promptGuardNode";
     private static final String NODE_PROMPT_REVIEW = "promptReviewNode";
     private static final String NODE_PRD_GEN = "prdGenNode";
@@ -98,6 +89,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private static final String NODE_PERSIST = "persistNode";
     private static final String NODE_INTENT_CLASSIFY = "intentClassifyNode";
     private static final String NODE_CHAT_DIRECT = "chatDirectNode";
+    private static final String NODE_VISUAL_EDIT = "visualEditNode";
+    private static final String NODE_EDIT_COMPLETE = "editCompleteNode";
     private static final String NODE_CODE_FIX = "codeFixNode";
     private static final String NODE_FAIL = "failNode";
 
@@ -169,8 +162,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     return;
                 }
 
-                // 直接对话路径 - 非编码任务
-                if (!finalState.isCodingTask()) {
+                // 直接对话路径 - 普通对话
+                if (!finalState.isCodingTask() && !finalState.isVisualEdit()) {
                     String chatResponse = finalState.chatResponse();
                     if (chatResponse != null && !chatResponse.isBlank()) {
                         ChatMemory chatMemory = chatMemoryService.getChatMemory(
@@ -186,20 +179,32 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     return;
                 }
 
+                // 编码任务 & 可视化编辑 - 统一质检流程
                 if (!finalState.qualityPass()) {
                     throw new RuntimeException(finalState.errorMessageOr("Quality check failed"));
                 }
 
                 String generatedContent = finalState.generatedContent();
-                ChatMemory chatMemory = chatMemoryService.getChatMemory(
-                        appId, userId, promptLoader.load(resolvePromptTemplate(finalState.routeType())));
-                chatMemory.add(AiMessage.from(generatedContent));
+                if (finalState.isVisualEdit()) {
+                    ChatMemory chatMemory = chatMemoryService.getChatMemory(
+                            appId, userId, promptLoader.load("workflow_visual_edit.txt"));
+                    chatMemory.add(AiMessage.from("可视化编辑已完成，修改已保存到文件系统"));
+                    appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                    saveNodeMessage(appId, userId, userHistory.getId(), NODE_EDIT_COMPLETE, "edit completed");
+                    log.info("[{}] ========= 可视化编辑完成, appId={}, 重试次数={} =========", "Workflow", appId, finalState.retryCount());
+                    updateStatus(appId, "completed", NODE_VISUAL_EDIT, app.getCodeGenType(),
+                            finalState.retryCount(), "visual edit completed");
+                } else {
+                    ChatMemory chatMemory = chatMemoryService.getChatMemory(
+                            appId, userId, promptLoader.load(resolvePromptTemplate(finalState.routeType())));
+                    chatMemory.add(AiMessage.from("代码已生成并保存到文件系统"));
+                    appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                    saveNodeMessage(appId, userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
+                    log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={} =========", "Workflow", appId, finalState.route(), finalState.retryCount());
+                    updateStatus(appId, "completed", NODE_PERSIST, finalState.route(),
+                            finalState.retryCount(), "workflow completed");
+                }
 
-                appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
-                saveNodeMessage(appId, userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
-                log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={} =========", "Workflow", appId, finalState.route(), finalState.retryCount());
-                updateStatus(appId, "completed", NODE_PERSIST, finalState.route(),
-                        finalState.retryCount(), "workflow completed");
                 emitDone(sink);
                 sink.complete();
             } catch (Exception e) {
@@ -209,37 +214,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 if (userHistory != null) {
                     persistFailure(appId, userId, userHistory, "Workflow failed: " + e.getMessage());
                 }
-                emitError(sink, e.getMessage());
-                emitDone(sink);
-                sink.complete();
-            }
-        }).subscribeOn(Schedulers.boundedElastic());
-    }
-
-    @Override
-    public Flux<ServerSentEvent<String>> visualEdit(VisualEditRequest request) {
-        Long userId = UserContext.getLoginUserId();
-        App app = checkAppAndOwner(request.getAppId(), userId);
-        return Flux.<ServerSentEvent<String>>create(sink -> {
-            try {
-                Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, app.getDeployKey());
-                String targetFile = request.getTargetFile() == null || request.getTargetFile().isBlank()
-                        ? "index.html" : request.getTargetFile();
-                String originalCode = workflowFileToolService.readFile(rootDir, targetFile);
-
-                emitToolRequest(sink, "visualEdit", Map.of(
-                        "selector", request.getSelector(),
-                        "targetFile", targetFile));
-                String editedCode = callVisualEditModel(originalCode, request);
-                workflowFileToolService.writeFile(rootDir, targetFile, editedCode);
-                emitAiResponse(sink, editedCode);
-                emitToolExecuted(sink, "visualEdit", Map.of("updated", true, "targetFile", targetFile));
-                emitDone(sink);
-                sink.complete();
-            } catch (Exception e) {
-                emitError(sink, e.getMessage());
-                emitDone(sink);
-                sink.complete();
+                if (!sink.isCancelled()) {
+                    try {
+                        emitError(sink, e.getMessage());
+                        emitDone(sink);
+                    } catch (Exception ignored) {
+                    }
+                    sink.complete();
+                }
             }
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -274,6 +256,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         graph.addNode(NODE_CODE_FIX, state -> CompletableFuture.completedFuture(runCodeFixNode(state, app, userId, userHistory, sink)));
         graph.addNode(NODE_INTENT_CLASSIFY, state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)));
         graph.addNode(NODE_CHAT_DIRECT, state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)));
+        graph.addNode(NODE_VISUAL_EDIT, state -> CompletableFuture.completedFuture(runVisualEditNode(state, app, userId, message, userHistory, sink)));
         graph.addNode(NODE_FAIL, state -> CompletableFuture.completedFuture(runFailNode(state, sink)));
 
         graph.addEdge(StateGraph.START, NODE_PROMPT_GUARD);
@@ -284,15 +267,16 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 state -> CompletableFuture.completedFuture(state.reviewSafe() ? "passed" : "rejected"),
                 Map.of("passed", NODE_INTENT_CLASSIFY, "rejected", StateGraph.END));
         graph.addConditionalEdges(NODE_INTENT_CLASSIFY,
-                state -> CompletableFuture.completedFuture(state.isCodingTask() ? "coding" : "chat"),
-                Map.of("coding", NODE_PRD_GEN, "chat", NODE_CHAT_DIRECT));
+                state -> CompletableFuture.completedFuture(resolveIntentEdge(state)),
+                Map.of("coding", NODE_PRD_GEN, "visual_edit", NODE_VISUAL_EDIT, "chat", NODE_CHAT_DIRECT));
         graph.addEdge(NODE_CHAT_DIRECT, StateGraph.END);
-        graph.addEdge(NODE_PRD_GEN, NODE_IMAGE_PLAN);
+        graph.addEdge(NODE_PRD_GEN, NODE_ROUTE);
+        graph.addEdge(NODE_ROUTE, NODE_IMAGE_PLAN);
         graph.addEdge(NODE_IMAGE_PLAN, NODE_IMAGE_FETCH);
         graph.addEdge(NODE_IMAGE_FETCH, NODE_PROMPT_ENHANCE);
-        graph.addEdge(NODE_PROMPT_ENHANCE, NODE_ROUTE);
-        graph.addEdge(NODE_ROUTE, NODE_CODE_GEN);
+        graph.addEdge(NODE_PROMPT_ENHANCE, NODE_CODE_GEN);
         graph.addEdge(NODE_CODE_GEN, NODE_QUALITY_CHECK);
+        graph.addEdge(NODE_VISUAL_EDIT, NODE_QUALITY_CHECK);
         graph.addConditionalEdges(NODE_QUALITY_CHECK,
                 state -> CompletableFuture.completedFuture(resolveQualityEdge(state)),
                 Map.of("fix", NODE_CODE_FIX, "pass", StateGraph.END, "failed", NODE_FAIL));
@@ -349,37 +333,44 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private Map<String, Object> runIntentClassifyNode(WorkflowGraphState state, String message,
-                                                       ChatHistory userHistory, Long userId,
-                                                       FluxSink<ServerSentEvent<String>> sink) {
+                                                      ChatHistory userHistory, Long userId,
+                                                      FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> intentClassifyNode 开始执行, appId={}", "Workflow", userHistory.getAppId());
         emitToolRequest(sink, NODE_INTENT_CLASSIFY, Map.of("message", message));
-        boolean isCoding = classifyIntent(message);
-        String label = isCoding ? "编码任务" : "普通对话";
+        String intent = classifyIntent(message);
+        String label = switch (intent) {
+            case "visual_edit" -> "可视化编辑";
+            case "chat" -> "普通对话";
+            default -> "编码任务";
+        };
         log.info("[{}] <<< intentClassifyNode 完成, appId={}, 意图={}", "Workflow", userHistory.getAppId(), label);
         emitToolExecuted(sink, NODE_INTENT_CLASSIFY, Map.of("intent", label), label);
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_INTENT_CLASSIFY, label);
         return Map.of(
-                "isCodingTask", isCoding,
+                "intent", intent,
                 "currentNode", NODE_INTENT_CLASSIFY,
                 "statusMessage", "intent classified: " + label);
     }
 
-    private boolean classifyIntent(String message) {
+    private String classifyIntent(String message) {
         try {
             String prompt = promptLoader.load("workflow_intent.txt") + message;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
             JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
             String intent = node.path("intent").asText("coding");
-            return "coding".equalsIgnoreCase(intent);
+            if (List.of("coding", "visual_edit", "chat").contains(intent)) {
+                return intent;
+            }
+            return "coding";
         } catch (Exception e) {
             log.warn("Intent classification failed, fallback to coding task", e);
-            return true;
+            return "coding";
         }
     }
 
     private Map<String, Object> runChatDirectNode(WorkflowGraphState state, Long appId, Long userId,
-                                                    String message, ChatHistory userHistory,
-                                                    FluxSink<ServerSentEvent<String>> sink) {
+                                                  String message, ChatHistory userHistory,
+                                                  FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> chatDirectNode 开始执行, appId={}", "Workflow", appId);
         emitToolRequest(sink, NODE_CHAT_DIRECT, Map.of("message", message));
 
@@ -430,10 +421,82 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         emitToolExecuted(sink, NODE_CHAT_DIRECT, Map.of("length", chatResponse.length()));
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CHAT_DIRECT, chatResponse);
         return Map.of(
-                "isCodingTask", false,
+                "intent", "chat",
                 "chatResponse", chatResponse,
                 "currentNode", NODE_CHAT_DIRECT,
                 "statusMessage", "chat completed");
+    }
+
+    private Map<String, Object> runVisualEditNode(WorkflowGraphState state, App app, Long userId,
+                                                  String message, ChatHistory userHistory,
+                                                  FluxSink<ServerSentEvent<String>> sink) {
+        Long appId = app.getId();
+        log.info("[{}] >>> visualEditNode 开始执行, appId={}", "Workflow", appId);
+        emitToolRequest(sink, NODE_VISUAL_EDIT, Map.of("message", message));
+
+        Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, app.getDeployKey());
+        WorkflowFileTools fileTools = new WorkflowFileTools(rootDir, workflowFileToolService);
+        List<ToolSpecification> toolSpecs = ToolSpecifications.toolSpecificationsFrom(fileTools);
+
+        // 构建 system prompt
+        String systemPrompt = promptLoader.load("workflow_visual_edit.txt");
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(SystemMessage.from(systemPrompt));
+        messages.add(UserMessage.from("请根据用户的编辑指令修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户编辑指令:\n" + message));
+
+        // tool-calling 循环，最多 15 轮
+        int maxRounds = 15;
+        String editSummary = "";
+        for (int round = 1; round < maxRounds; round++) {
+            ChatRequest chatRequest = ChatRequest.builder()
+                    .messages(messages)
+                    .toolSpecifications(toolSpecs)
+                    .build();
+            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            AiMessage aiMessage = chatResponse.aiMessage();
+            messages.add(aiMessage);
+
+            if (aiMessage.hasToolExecutionRequests()) {
+                for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
+                    log.info("[{}] visualEditNode 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
+                    String toolResult = executeToolCall(fileTools, toolRequest);
+                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
+                }
+            } else {
+                editSummary = aiMessage.text();
+                break;
+            }
+        }
+
+        // 读取修改后的主文件内容作为 generatedContent（供质检节点使用）
+        String generatedContent = readMainFileContent(rootDir);
+
+        log.info("[{}] <<< visualEditNode 完成, appId={}, 编辑摘要长度={}", "Workflow", appId, editSummary.length());
+        emitToolExecuted(sink, NODE_VISUAL_EDIT, Map.of("updated", true));
+        saveNodeMessage(appId, userId, userHistory.getId(), NODE_VISUAL_EDIT, "可视化编辑完成");
+
+        return Map.of(
+                "intent", "visual_edit",
+                "generatedContent", generatedContent,
+                "currentNode", NODE_VISUAL_EDIT,
+                "statusMessage", "visual edit completed");
+    }
+
+    /**
+     * 读取项目主文件内容（index.html），用于质检节点。
+     * 多文件项目拼接所有文件内容。
+     */
+    private String readMainFileContent(Path rootDir) {
+        List<String> filePaths = workflowFileToolService.listFiles(rootDir);
+        if (filePaths.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String fp : filePaths) {
+            String content = workflowFileToolService.readFile(rootDir, fp);
+            if (content != null && !content.isBlank()) {
+                sb.append(content);
+            }
+        }
+        return sb.toString();
     }
 
     private Map<String, Object> runPrdGenNode(WorkflowGraphState state, App app, String message,
@@ -452,8 +515,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private Map<String, Object> runImagePlanNode(WorkflowGraphState state, String message,
-                                                  ChatHistory userHistory, Long userId,
-                                                  FluxSink<ServerSentEvent<String>> sink) {
+                                                 ChatHistory userHistory, Long userId,
+                                                 FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> imagePlanNode 开始执行, appId={}", "Workflow", userHistory.getAppId());
         List<String> imagePlan = List.of("content", "illustration", "diagram", "logo");
         try {
@@ -563,8 +626,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                                              ChatHistory userHistory, Long userId,
                                              FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> routeNode 开始执行, appId={}, 请求类型={}", "Workflow", app.getId(), app.getCodeGenType());
-        emitToolRequest(sink, NODE_ROUTE, Map.of("requestedType", app.getCodeGenType()));
-        CodeGenType codeGenType = determineCodeGenType(app, message);
+        emitToolRequest(sink, NODE_ROUTE, Map.of("requestedType", app.getCodeGenType() != null ? app.getCodeGenType() : "auto"));
+        CodeGenType codeGenType = determineCodeGenType(app, message, state.prd());
         log.info("[{}] <<< routeNode 完成, appId={}, 路由决策={}", "Workflow", app.getId(), codeGenType.getValue());
         emitToolExecuted(sink, NODE_ROUTE, Map.of("route", codeGenType.getValue()), "Route: " + codeGenType.getValue());
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_ROUTE,
@@ -581,19 +644,76 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         Long appId = app.getId();
         log.info("[{}] >>> codeGenNode 开始执行, appId={}, route={}, 重试次数={}", "Workflow", appId, state.route(), state.retryCount());
         emitToolRequest(sink, NODE_CODE_GEN, Map.of("route", state.route(), "retry", state.retryCount()));
-        String generatedContent = generateCodeStream(appId, userId, state.enhancedPrompt(), state.routeType(), sink);
 
-        // 生成完成后立即写入文件
-        CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
-        strategy.persist(app.getDeployKey(), normalizePayload(state.routeType(), generatedContent));
-        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}, 已写入文件", "Workflow", appId, generatedContent.length());
+        Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, app.getDeployKey());
+        boolean hasExistingFiles = !workflowFileToolService.listFiles(rootDir).isEmpty();
 
+        String generatedContent;
+        if (hasExistingFiles) {
+            // 后续迭代：使用工具调用模式，AI 自主读取和修改文件
+            log.info("[{}] codeGenNode 检测到已有文件，进入迭代修改模式, appId={}", "Workflow", appId);
+            generatedContent = runCodeGenIteration(rootDir, state.enhancedPrompt());
+        } else {
+            // 初次生成：保持流式生成
+            boolean[] incrementalSaved = {false};
+            generatedContent = generateCodeStream(appId, userId, state.enhancedPrompt(), state.routeType(), app.getDeployKey(), sink, incrementalSaved);
+            // 格式化代码缩进
+            generatedContent = formatCodeBlocks(generatedContent);
+            // HTML 模式需要最终写入；非 HTML 模式增量保存未触发时兜底全量写入
+            if (state.routeType() == CodeGenType.HTML) {
+                CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
+                strategy.persist(app.getDeployKey(), normalizePayload(state.routeType(), generatedContent));
+            } else if (!incrementalSaved[0]) {
+                log.warn("[Workflow] 增量保存未触发，执行全量写入, appId={}", appId);
+                CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
+                strategy.persist(app.getDeployKey(), generatedContent);
+            }
+        }
+
+        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}", "Workflow", appId, generatedContent.length());
         emitToolExecuted(sink, NODE_CODE_GEN, Map.of("length", generatedContent.length(), "retry", state.retryCount(), "persisted", true));
-        saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, generatedContent);
+        saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, "代码已生成并保存");
         return Map.of(
                 "generatedContent", generatedContent,
                 "currentNode", NODE_CODE_GEN,
                 "statusMessage", "code generated and persisted");
+    }
+
+    /**
+     * 后续迭代：AI 通过工具调用读取现有文件并修改
+     */
+    private String runCodeGenIteration(Path rootDir, String enhancedPrompt) {
+        WorkflowFileTools fileTools = new WorkflowFileTools(rootDir, workflowFileToolService);
+        List<ToolSpecification> toolSpecs = ToolSpecifications.toolSpecificationsFrom(fileTools);
+
+        String systemPrompt = promptLoader.load("workflow_code_iteration.txt");
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(SystemMessage.from(systemPrompt));
+        messages.add(UserMessage.from("请根据用户需求修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户需求:\n" + enhancedPrompt));
+
+        int maxRounds = 15;
+        for (int round = 0; round < maxRounds; round++) {
+            ChatRequest chatRequest = ChatRequest.builder()
+                    .messages(messages)
+                    .toolSpecifications(toolSpecs)
+                    .build();
+            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            AiMessage aiMessage = chatResponse.aiMessage();
+            messages.add(aiMessage);
+
+            if (aiMessage.hasToolExecutionRequests()) {
+                for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
+                    log.info("[{}] codeGenIteration 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
+                    String toolResult = executeToolCall(fileTools, toolRequest);
+                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
+                }
+            } else {
+                // AI 完成修改
+                break;
+            }
+        }
+
+        return readMainFileContent(rootDir);
     }
 
     private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, ChatHistory userHistory, Long userId, FluxSink<ServerSentEvent<String>> sink) {
@@ -613,8 +733,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private Map<String, Object> runCodeFixNode(WorkflowGraphState state, App app, Long userId,
-                                                ChatHistory userHistory,
-                                                FluxSink<ServerSentEvent<String>> sink) {
+                                               ChatHistory userHistory,
+                                               FluxSink<ServerSentEvent<String>> sink) {
         Long appId = app.getId();
         String fixReason = state.errorMessage();
         log.info("[{}] >>> codeFixNode 开始执行, appId={}, 修复原因={}", "Workflow", appId, fixReason);
@@ -660,7 +780,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         log.info("[{}] <<< codeFixNode 完成, appId={}, 修复摘要长度={}", "Workflow", appId, fixSummary.length());
         emitToolExecuted(sink, NODE_CODE_FIX, Map.of("summary", fixSummary), fixSummary);
         saveNodeMessage(appId, userId, userHistory.getId(), NODE_CODE_FIX, fixSummary);
+        // 读取修复后的磁盘文件内容，供质量检查节点使用
+        String updatedContent = readMainFileContent(rootDir);
         return Map.of(
+                "generatedContent", updatedContent,
                 "lastFixReason", "",
                 "currentNode", NODE_CODE_FIX,
                 "statusMessage", "code fix applied");
@@ -695,7 +818,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private Map<String, Object> runPersistNode(WorkflowGraphState state, App app, Long userId,
-                                                 ChatHistory userHistory, FluxSink<ServerSentEvent<String>> sink) {
+                                               ChatHistory userHistory, FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> persistNode 开始执行, appId={}, deployKey={}, route={}", "Workflow", app.getId(), app.getDeployKey(), state.route());
         emitToolRequest(sink, NODE_PERSIST, Map.of("route", state.route()));
         CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
@@ -727,6 +850,16 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
         log.error("[{}] 质量检查重试次数耗尽({}), 进入失败节点", "Workflow", state.retryCount());
         return "failed";
+    }
+
+    private String resolveIntentEdge(WorkflowGraphState state) {
+        String intent = state.intent();
+        log.info("[{}] 意图路由: intent={}", "Workflow", intent);
+        return switch (intent) {
+            case "visual_edit" -> "visual_edit";
+            case "chat" -> "chat";
+            default -> "coding";
+        };
     }
 
     private ReviewResult reviewPrompt(String prompt) {
@@ -804,16 +937,30 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         return builder.toString();
     }
 
-    private CodeGenType determineCodeGenType(App app, String message) {
+    private CodeGenType determineCodeGenType(App app, String message, String prd) {
         if (app.getCodeGenType() != null && !app.getCodeGenType().isBlank()) {
             return CodeGenType.normalize(app.getCodeGenType());
         }
         try {
-            String prompt = promptLoader.load("workflow_route.txt") + message;
-            ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
-            JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
-            String route = node.path("route").asText("html");
-            return CodeGenType.normalize(route);
+            StringBuilder sb = new StringBuilder(promptLoader.load("workflow_route.txt"));
+            if (prd != null && !prd.isBlank()) {
+                sb.append("\n\nPRD文档：\n").append(prd);
+            }
+            sb.append("\n\n用户原始需求：\n").append(message);
+            ChatResponse response = reviewChatModel.chat(UserMessage.from(sb.toString()));
+            AiMessage aiMessage = response.aiMessage();
+            String responseText = aiMessage.text();
+            if (responseText == null || responseText.isBlank()) {
+                log.warn("AI route response text is null, aiMessage={}", aiMessage);
+            } else {
+                String json = extractJson(responseText.trim());
+                if (json != null) {
+                    JsonNode node = objectMapper.readTree(json);
+                    String route = node.path("route").asText("html");
+                    return CodeGenType.normalize(route);
+                }
+                log.warn("AI route response has no JSON, text={}", responseText);
+            }
         } catch (Exception e) {
             log.warn("AI route determination failed, fallback to keyword matching", e);
         }
@@ -828,7 +975,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private String generateCodeStream(Long appId, Long userId, String enhancedPrompt, CodeGenType codeGenType,
-                                      FluxSink<ServerSentEvent<String>> sink) {
+                                      String deployKey, FluxSink<ServerSentEvent<String>> sink,
+                                      boolean[] incrementalSaved) {
         log.info("[{}] 开始流式代码生成, appId={}, codeGenType={}, 提示词长度={}", "Workflow", appId, codeGenType, enhancedPrompt.length());
         String systemPrompt = promptLoader.load(resolvePromptTemplate(codeGenType));
         ChatMemory chatMemory = chatMemoryService.getChatMemory(appId, userId, systemPrompt);
@@ -840,11 +988,27 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         RuntimeException[] errorHolder = new RuntimeException[1];
         CountDownLatch latch = new CountDownLatch(1);
 
+        // 流式增量保存：追踪已完成的文件块偏移量
+        Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, deployKey);
+        if (codeGenType != CodeGenType.HTML) {
+            try {
+                Files.createDirectories(rootDir);
+            } catch (Exception e) {
+                log.warn("[Workflow] 创建输出目录失败: {}", e.getMessage());
+            }
+        }
+        int[] savedOffset = {0};
+
         streamingModel.chat(messages, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
                 responseBuilder.append(partialResponse);
                 emitAiResponse(sink, partialResponse);
+
+                // 非 HTML 模式：检测已闭合的文件块，立即写入磁盘
+                if (codeGenType != CodeGenType.HTML) {
+                    savedOffset[0] = saveCompletedFileBlocks(responseBuilder.toString(), savedOffset[0], rootDir, incrementalSaved);
+                }
             }
 
             @Override
@@ -874,6 +1038,33 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
         log.info("[{}] 流式代码生成完成, appId={}, 响应长度={}", "Workflow", appId, responseBuilder.length());
         return responseBuilder.toString();
+    }
+
+    /**
+     * 从 searchFrom 位置开始，检测已闭合的文件块并写入磁盘。
+     * 返回新的搜索起始位置（最后一个匹配的结束位置），下次从这里继续搜索。
+     */
+    private static final Pattern FILE_BLOCK_PATTERN =
+            Pattern.compile("```file:([^\\n\\r]+)\\R([\\s\\S]*?)```", Pattern.CASE_INSENSITIVE);
+
+    private int saveCompletedFileBlocks(String content, int searchFrom, Path rootDir, boolean[] incrementalSaved) {
+        try {
+            Matcher matcher = FILE_BLOCK_PATTERN.matcher(content);
+            matcher.region(searchFrom, content.length());
+            int lastMatchEnd = searchFrom;
+            while (matcher.find()) {
+                String fileName = matcher.group(1).trim();
+                String fileContent = matcher.group(2).strip();
+                workflowFileToolService.writeFile(rootDir, fileName, fileContent);
+                log.info("[Workflow] 流式增量保存文件: {}", fileName);
+                lastMatchEnd = matcher.end();
+                incrementalSaved[0] = true;
+            }
+            return lastMatchEnd;
+        } catch (Exception e) {
+            log.warn("[Workflow] 流式增量保存失败: {}", e.getMessage());
+            return searchFrom;
+        }
     }
 
     private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent) {
@@ -918,26 +1109,6 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         };
     }
 
-    private String callVisualEditModel(String originalCode, VisualEditRequest request) {
-        String prompt = promptLoader.load("workflow_visual_edit.txt")
-                + "\nTARGET SELECTOR: " + request.getSelector()
-                + "\nORIGINAL ELEMENT:\n" + request.getSelectedHtml()
-                + "\nINSTRUCTION:\n" + request.getInstruction()
-                + "\nFULL CODE:\n" + originalCode;
-        try {
-            ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
-            String result = response.aiMessage().text().trim();
-            if (!result.isBlank()) {
-                return result;
-            }
-        } catch (Exception e) {
-            log.warn("Visual edit model call failed, appId={}", request.getAppId(), e);
-        }
-        return originalCode.replace(
-                request.getSelectedHtml(),
-                request.getSelectedHtml() + "\n<!-- " + request.getInstruction() + " -->");
-    }
-
     private void persistFailure(Long appId, Long userId, ChatHistory userHistory, String errorMessage) {
         try {
             chatHistoryService.saveAiMessage(appId, userId, errorMessage, userHistory.getId());
@@ -974,14 +1145,33 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 }
                 case NODE_INTENT_CLASSIFY -> {
                     status.put("icon", "🔍");
-                    boolean isCoding = content.contains("编码");
+                    String detail;
+                    if (content.contains("可视化编辑")) {
+                        detail = "可视化编辑";
+                    } else if (content.contains("编码")) {
+                        detail = "开发任务";
+                    } else {
+                        detail = "普通对话";
+                    }
                     status.put("label", "分析用户意图");
-                    status.put("detail", isCoding ? "开发任务" : "普通对话");
+                    status.put("detail", detail);
                     status.put("status", "done");
                 }
                 case NODE_CHAT_DIRECT -> {
                     status.put("icon", "💬");
                     status.put("label", "对话回复完成");
+                    status.put("status", "done");
+                }
+                case NODE_VISUAL_EDIT -> {
+                    status.put("icon", "🎨");
+                    status.put("label", "执行修改");
+                    status.put("detail", "已完成");
+                    status.put("status", "done");
+                }
+                case NODE_EDIT_COMPLETE -> {
+                    status.put("icon", "✅");
+                    status.put("label", "修改完成");
+                    status.put("detail", "已完成");
                     status.put("status", "done");
                 }
                 case NODE_PRD_GEN -> {
@@ -1097,16 +1287,23 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private void emitEvent(FluxSink<ServerSentEvent<String>> sink, String type, Object data) {
+        if (sink.isCancelled()) {
+            return;
+        }
         try {
             String payload = objectMapper.writeValueAsString(new WorkflowEvent(type, data));
             sink.next(ServerSentEvent.<String>builder().data(payload).build());
         } catch (Exception e) {
-            throw new RuntimeException("Serialize SSE event failed", e);
+            log.warn("[Workflow] SSE 发送失败: {}", e.getMessage());
         }
     }
 
     private void sleepBriefly() {
-        try { Thread.sleep(30); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try {
+            Thread.sleep(30);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void updateStatus(Long appId, String status, String currentNode, String route,
@@ -1221,8 +1418,16 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             return value("errorMessage", "");
         }
 
+        String intent() {
+            return value("intent", "coding");
+        }
+
         boolean isCodingTask() {
-            return value("isCodingTask", true);
+            return "coding".equals(intent());
+        }
+
+        boolean isVisualEdit() {
+            return "visual_edit".equals(intent());
         }
 
         String chatResponse() {
@@ -1237,5 +1442,105 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             String message = errorMessage();
             return message == null || message.isBlank() ? fallback : message;
         }
+    }
+
+    // ============ 代码格式化 ============
+
+    /**
+     * 检测代码是否已有缩进（任一非空行以空格或 tab 开头）
+     */
+    private boolean hasIndentation(String code) {
+        for (String line : code.split("\n")) {
+            if (!line.isEmpty() && (line.charAt(0) == ' ' || line.charAt(0) == '\t')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 对 markdown 中的代码块进行格式化。
+     * 只处理 html 代码块；若代码块内已有缩进则跳过。
+     */
+    private String formatCodeBlocks(String markdown) {
+        if (markdown == null || !markdown.contains("```")) return markdown;
+
+        Matcher matcher = HTML_CODE_PATTERN.matcher(markdown);
+        StringBuffer sb = new StringBuffer();
+        boolean found = false;
+        while (matcher.find()) {
+            found = true;
+            String code = matcher.group(1);
+            String formatted = hasIndentation(code) ? code : reindentHtml(code);
+            matcher.appendReplacement(sb, Matcher.quoteReplacement("```html\n" + formatted + "\n```"));
+        }
+        if (!found) return markdown;
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    /**
+     * 对无缩进的 HTML 代码重新缩进，按标签嵌套层级添加缩进。
+     * <style> / <script> 内部内容原样保留，仅做一级缩进。
+     */
+    private String reindentHtml(String code) {
+        StringBuilder sb = new StringBuilder();
+        int level = 0;
+        boolean inStyle = false;
+        boolean inScript = false;
+
+        for (String rawLine : code.split("\n")) {
+            String trimmed = rawLine.trim();
+            if (trimmed.isEmpty()) continue;
+
+            // ---- <style> / <script> 块结束 ----
+            if (inStyle && trimmed.startsWith("</style")) {
+                inStyle = false;
+                level = Math.max(0, level - 1);
+                sb.append("  ".repeat(level)).append(trimmed).append("\n");
+                continue;
+            }
+            if (inScript && trimmed.startsWith("</script")) {
+                inScript = false;
+                level = Math.max(0, level - 1);
+                sb.append("  ".repeat(level)).append(trimmed).append("\n");
+                continue;
+            }
+
+            // ---- <style> / <script> 块内部，保持原样，仅缩进一级 ----
+            if (inStyle || inScript) {
+                sb.append("  ".repeat(level + 1)).append(trimmed).append("\n");
+                continue;
+            }
+
+            // ---- 独立的关闭标签：先缩进再输出 ----
+            boolean isStandaloneClose = trimmed.startsWith("</")
+                    && !trimmed.substring(2).contains("<")
+                    && trimmed.endsWith(">");
+            if (isStandaloneClose) {
+                level = Math.max(0, level - 1);
+                sb.append("  ".repeat(level)).append(trimmed).append("\n");
+                continue;
+            }
+
+            // ---- 其他行：先输出再判断是否升级层级 ----
+            sb.append("  ".repeat(level)).append(trimmed).append("\n");
+
+            if (trimmed.startsWith("<") && !trimmed.startsWith("<!") && !trimmed.startsWith("</")) {
+                Matcher tm = TAG_NAME_PATTERN.matcher(trimmed);
+                if (tm.find()) {
+                    String tag = tm.group(1).toLowerCase();
+                    boolean selfClose = trimmed.endsWith("/>");
+                    boolean voidTag = VOID_TAGS.contains(tag);
+                    boolean sameLineClose = !selfClose && !voidTag && trimmed.contains("</");
+                    if (!selfClose && !voidTag && !sameLineClose) {
+                        level++;
+                        if ("style".equals(tag)) inStyle = true;
+                        if ("script".equals(tag)) inScript = true;
+                    }
+                }
+            }
+        }
+        return sb.toString().stripTrailing();
     }
 }

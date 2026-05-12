@@ -58,7 +58,8 @@ public class AppServiceImpl implements AppService {
         app.setUserId(userId);
         app.setDeployKey("DK_" + IdUtil.getSnowflakeNextIdStr());
         app.setStatus(AppStatus.DRAFT.getValue());
-        app.setCodeGenType(CodeGenType.normalize(request.getCodeGenType()).getValue());
+        app.setCodeGenType(request.getCodeGenType() != null && !request.getCodeGenType().isBlank()
+                ? CodeGenType.normalize(request.getCodeGenType()).getValue() : null);
         app.setIsPublic(0);
         app.setIsFeatured(0);
         app.setPriority(0);
