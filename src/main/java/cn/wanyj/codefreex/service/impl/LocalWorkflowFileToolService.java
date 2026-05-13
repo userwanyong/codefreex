@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 本地文件工具实现
@@ -19,6 +20,12 @@ import java.util.List;
  */
 @Service
 public class LocalWorkflowFileToolService implements WorkflowFileToolService {
+
+    private static final Set<String> EXCLUDED_DIRS = Set.of("node_modules", ".git", "dist", ".vite");
+    private static final Set<String> BINARY_EXTENSIONS = Set.of(
+            ".exe", ".dll", ".so", ".dylib", ".bin", ".png", ".jpg", ".jpeg", ".gif",
+            ".ico", ".svg", ".woff", ".woff2", ".ttf", ".eot", ".map", ".wasm"
+    );
 
     @Override
     public void writeFile(Path rootDir, String relativePath, String content) {
@@ -61,7 +68,24 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
             return List.of();
         }
         try (var stream = Files.walk(rootDir)) {
-            return stream.filter(Files::isRegularFile)
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        for (Path segment : rootDir.relativize(p)) {
+                            if (EXCLUDED_DIRS.contains(segment.toString())) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    })
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        int dotIndex = name.lastIndexOf('.');
+                        if (dotIndex >= 0 && BINARY_EXTENSIONS.contains(name.substring(dotIndex))) {
+                            return false;
+                        }
+                        return true;
+                    })
                     .sorted(Comparator.naturalOrder())
                     .map(rootDir::relativize)
                     .map(path -> path.toString().replace('\\', '/'))

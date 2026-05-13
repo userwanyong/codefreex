@@ -91,4 +91,12 @@ public interface AppService {
      * @param status 新状态
      */
     void updateAppStatus(Long appId, String status);
+
+    /**
+     * 更新应用代码生成类型
+     *
+     * @param appId       应用ID
+     * @param codeGenType 代码生成类型
+     */
+    void updateCodeGenType(Long appId, String codeGenType);
 }

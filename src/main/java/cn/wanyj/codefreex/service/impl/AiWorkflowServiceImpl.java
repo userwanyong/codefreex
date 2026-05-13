@@ -42,6 +42,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -92,6 +93,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private static final String NODE_VISUAL_EDIT = "visualEditNode";
     private static final String NODE_EDIT_COMPLETE = "editCompleteNode";
     private static final String NODE_CODE_FIX = "codeFixNode";
+    private static final String NODE_BUILD = "buildNode";
     private static final String NODE_FAIL = "failNode";
 
     private static final Map<String, Channel<?>> WORKFLOW_SCHEMA = Map.of(
@@ -109,6 +111,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private final WorkflowImageService workflowImageService;
     private final CodePersistStrategyRegistry codePersistStrategyRegistry;
     private final WorkflowFileToolService workflowFileToolService;
+    private final ProjectBuildService projectBuildService;
     private final ObjectMapper objectMapper;
     private final AppRuntimeConfig.WorkflowProperties workflowProperties;
 
@@ -135,6 +138,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
                 WorkflowGraphState finalState = null;
                 for (NodeOutput<WorkflowGraphState> output : graph.stream(Map.of("message", message), runnableConfig)) {
+                    if (sink.isCancelled()) {
+                        log.warn("[{}] FluxSink 已取消，终止工作流, appId={}", "Workflow", appId);
+                        return;
+                    }
                     finalState = output.state();
                     updateStatus(
                             appId,
@@ -147,6 +154,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
                 if (finalState == null) {
                     throw new RuntimeException("Workflow produced no state");
+                }
+                if (sink.isCancelled()) {
+                    log.warn("[{}] FluxSink 已取消，跳过后续处理, appId={}", "Workflow", appId);
+                    return;
                 }
 
                 if (finalState.blocked() || !finalState.reviewSafe()) {
@@ -471,6 +482,31 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         // 读取修改后的主文件内容作为 generatedContent（供质检节点使用）
         String generatedContent = readMainFileContent(rootDir);
 
+        // 如果存在 source/ 目录，说明是 Vue 等需要构建的项目，可视化编辑修改了源码后需要重新构建
+        boolean hasSourceDir = Files.exists(rootDir.resolve("source"));
+        log.info("[Workflow] visualEditNode 构建检查, appId={}, codeGenType={}, hasSourceDir={}", appId, app.getCodeGenType(), hasSourceDir);
+        if (hasSourceDir) {
+            log.info("[Workflow] 可视化编辑完成，检测到 source/ 目录，开始重新构建, appId={}", appId);
+            emitToolRequest(sink, NODE_BUILD, Map.of("step", "rebuild_after_visual_edit"));
+            try {
+                projectBuildService.buildVueProject(rootDir, progress -> {
+                    log.info("[Workflow] 重新构建进度: {}, appId={}", progress, appId);
+                    if ("npm_install".equals(progress)) {
+                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
+                    } else if ("npm_build".equals(progress)) {
+                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
+                    }
+                });
+                emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "可视化编辑后重新构建完成");
+                saveNodeMessage(appId, userId, userHistory.getId(), NODE_BUILD, "可视化编辑后构建完成");
+                log.info("[Workflow] 可视化编辑后重新构建完成, appId={}", appId);
+            } catch (Exception e) {
+                log.warn("[Workflow] 可视化编辑后构建失败, 继续流程, appId={}", appId, e);
+            }
+            // 构建后重新读取产物内容供质检
+            generatedContent = readMainFileContent(rootDir);
+        }
+
         log.info("[{}] <<< visualEditNode 完成, appId={}, 编辑摘要长度={}", "Workflow", appId, editSummary.length());
         emitToolExecuted(sink, NODE_VISUAL_EDIT, Map.of("updated", true));
         saveNodeMessage(appId, userId, userHistory.getId(), NODE_VISUAL_EDIT, "可视化编辑完成");
@@ -488,7 +524,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
      */
     private String readMainFileContent(Path rootDir) {
         List<String> filePaths = workflowFileToolService.listFiles(rootDir);
-        if (filePaths.isEmpty()) return "";
+        if (filePaths.isEmpty()) {
+            return "";
+        }
         StringBuilder sb = new StringBuilder();
         for (String fp : filePaths) {
             String content = workflowFileToolService.readFile(rootDir, fp);
@@ -518,6 +556,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                                                  ChatHistory userHistory, Long userId,
                                                  FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> imagePlanNode 开始执行, appId={}", "Workflow", userHistory.getAppId());
+        emitToolRequest(sink, NODE_IMAGE_PLAN, Map.of("step", "planning"));
         List<String> imagePlan = List.of("content", "illustration", "diagram", "logo");
         try {
             String prompt = promptLoader.load("workflow_image_plan.txt") + message + "\n\nPRD:\n" + state.prd();
@@ -539,7 +578,6 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         } catch (Exception e) {
             log.warn("AI image plan failed, fallback to default", e);
         }
-        emitToolRequest(sink, NODE_IMAGE_PLAN, Map.of("plan", imagePlan));
         emitToolExecuted(sink, NODE_IMAGE_PLAN, imagePlan, String.join(", ", imagePlan));
         log.info("[{}] <<< imagePlanNode 完成, appId={}, 图片计划={}", "Workflow", userHistory.getAppId(), imagePlan);
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_IMAGE_PLAN,
@@ -632,6 +670,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         emitToolExecuted(sink, NODE_ROUTE, Map.of("route", codeGenType.getValue()), "Route: " + codeGenType.getValue());
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_ROUTE,
                 "Route: " + codeGenType.getValue());
+        // 将路由决策结果持久化到 App 表，供后续流程（如可视化编辑后的构建判断）使用
+        if (app.getCodeGenType() == null || !app.getCodeGenType().equals(codeGenType.getValue())) {
+            app.setCodeGenType(codeGenType.getValue());
+            appService.updateCodeGenType(app.getId(), codeGenType.getValue());
+            log.info("[Workflow] 已更新 app.codeGenType={}, appId={}", codeGenType.getValue(), app.getId());
+        }
         return Map.of(
                 "route", codeGenType.getValue(),
                 "currentNode", NODE_ROUTE,
@@ -649,6 +693,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         boolean hasExistingFiles = !workflowFileToolService.listFiles(rootDir).isEmpty();
 
         String generatedContent;
+        boolean codeGenMessageSaved = false;
         if (hasExistingFiles) {
             // 后续迭代：使用工具调用模式，AI 自主读取和修改文件
             log.info("[{}] codeGenNode 检测到已有文件，进入迭代修改模式, appId={}", "Workflow", appId);
@@ -668,11 +713,20 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 CodePersistStrategy strategy = codePersistStrategyRegistry.getStrategy(state.routeType());
                 strategy.persist(app.getDeployKey(), generatedContent);
             }
+            // 在构建之前保存 codeGenNode 记录，确保数据库顺序为：编写代码 → 项目构建
+            saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, "代码已生成并保存");
+            codeGenMessageSaved = true;
+            if (state.routeType() == CodeGenType.VUE && incrementalSaved[0]) {
+                // 增量保存已将文件写入 rootDir/，需要移到 rootDir/source/ 后执行构建
+                buildIncrementalVueProject(rootDir, appId, userId, userHistory.getId(), sink);
+            }
         }
 
         log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}", "Workflow", appId, generatedContent.length());
         emitToolExecuted(sink, NODE_CODE_GEN, Map.of("length", generatedContent.length(), "retry", state.retryCount(), "persisted", true));
-        saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, "代码已生成并保存");
+        if (!codeGenMessageSaved) {
+            saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, "代码已生成并保存");
+        }
         return Map.of(
                 "generatedContent", generatedContent,
                 "currentNode", NODE_CODE_GEN,
@@ -772,12 +826,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 }
             } else {
                 // AI 返回纯文本，修复完成
-                fixSummary = aiMessage.text();
+                fixSummary = aiMessage.text() != null ? aiMessage.text() : "";
                 break;
             }
         }
 
-        log.info("[{}] <<< codeFixNode 完成, appId={}, 修复摘要长度={}", "Workflow", appId, fixSummary.length());
+        log.info("[{}] <<< codeFixNode 完成, appId={}, 修复摘要长度={}", "Workflow", appId, fixSummary != null ? fixSummary.length() : 0);
         emitToolExecuted(sink, NODE_CODE_FIX, Map.of("summary", fixSummary), fixSummary);
         saveNodeMessage(appId, userId, userHistory.getId(), NODE_CODE_FIX, fixSummary);
         // 读取修复后的磁盘文件内容，供质量检查节点使用
@@ -1067,6 +1121,42 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
     }
 
+    /**
+     * 增量保存的 Vue 文件直接写在了 rootDir/ 下，需要移到 rootDir/source/ 后执行构建。
+     */
+    private void buildIncrementalVueProject(Path rootDir, Long appId, Long userId, Long parentId, FluxSink<ServerSentEvent<String>> sink) {
+        Path sourceDir = rootDir.resolve("source");
+        try {
+            Files.createDirectories(sourceDir);
+            // 将 rootDir 下的所有文件/目录移到 source/ 下（排除 source/ 自身）
+            try (var stream = Files.list(rootDir)) {
+                stream.filter(path -> !path.getFileName().toString().equals("source"))
+                        .forEach(path -> {
+                            try {
+                                Path target = sourceDir.resolve(path.getFileName().toString());
+                                Files.move(path, target);
+                            } catch (IOException e) {
+                                log.warn("[Workflow] 移动文件到 source/ 失败: {}", path.getFileName());
+                            }
+                        });
+            }
+            // 通知前端：开始构建
+            emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
+            log.info("[Workflow] 增量保存文件已移至 source/, 开始构建, appId={}", appId);
+            projectBuildService.buildVueProject(rootDir, progress -> {
+                log.info("[Workflow] Vue 构建进度: {}, appId={}", progress, appId);
+                if ("npm_build".equals(progress)) {
+                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
+                }
+            });
+            emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "构建完成");
+            saveNodeMessage(appId, userId, parentId, NODE_BUILD, "构建完成");
+        } catch (Exception e) {
+            log.error("[Workflow] Vue 项目构建失败, appId={}", appId, e);
+            throw new RuntimeException("Vue 项目构建失败: " + e.getMessage(), e);
+        }
+    }
+
     private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent) {
         if (generatedContent == null || generatedContent.isBlank()) {
             return new QualityCheckResult(false, "AI returned empty content");
@@ -1211,6 +1301,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     status.put("detail", "已完成");
                     status.put("status", "done");
                 }
+                case NODE_BUILD -> {
+                    status.put("icon", "📦");
+                    status.put("label", "项目构建");
+                    status.put("detail", "构建完成");
+                    status.put("status", "done");
+                }
                 case NODE_QUALITY_CHECK -> {
                     status.put("icon", "🔍");
                     status.put("label", "代码质量检查");
@@ -1288,13 +1384,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
     private void emitEvent(FluxSink<ServerSentEvent<String>> sink, String type, Object data) {
         if (sink.isCancelled()) {
-            return;
+            throw new RuntimeException("FluxSink cancelled, aborting workflow");
         }
         try {
             String payload = objectMapper.writeValueAsString(new WorkflowEvent(type, data));
             sink.next(ServerSentEvent.<String>builder().data(payload).build());
         } catch (Exception e) {
-            log.warn("[Workflow] SSE 发送失败: {}", e.getMessage());
+            log.warn("[Workflow] SSE 发送失败 (type={}): {}", type, e.getMessage());
+            throw new RuntimeException("SSE emit failed, client likely disconnected", e);
         }
     }
 
@@ -1463,7 +1560,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
      * 只处理 html 代码块；若代码块内已有缩进则跳过。
      */
     private String formatCodeBlocks(String markdown) {
-        if (markdown == null || !markdown.contains("```")) return markdown;
+        if (markdown == null || !markdown.contains("```")) {
+            return markdown;
+        }
 
         Matcher matcher = HTML_CODE_PATTERN.matcher(markdown);
         StringBuffer sb = new StringBuffer();
@@ -1474,7 +1573,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             String formatted = hasIndentation(code) ? code : reindentHtml(code);
             matcher.appendReplacement(sb, Matcher.quoteReplacement("```html\n" + formatted + "\n```"));
         }
-        if (!found) return markdown;
+        if (!found) {
+            return markdown;
+        }
         matcher.appendTail(sb);
         return sb.toString();
     }

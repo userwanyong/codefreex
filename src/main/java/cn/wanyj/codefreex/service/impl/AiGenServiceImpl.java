@@ -89,6 +89,9 @@ public class AiGenServiceImpl implements AiGenService {
 
                 @Override
                 public void onPartialResponse(String partialToken) {
+                    if (sink.isCancelled()) {
+                        return;
+                    }
                     fullResponse.append(partialToken);
                     try {
                         String json = objectMapper.writeValueAsString(

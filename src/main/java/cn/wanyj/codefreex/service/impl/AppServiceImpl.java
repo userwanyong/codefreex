@@ -231,6 +231,14 @@ public class AppServiceImpl implements AppService {
                 .update();
     }
 
+    @Override
+    public void updateCodeGenType(Long appId, String codeGenType) {
+        UpdateChain.of(App.class)
+                .where(APP.ID.eq(appId))
+                .set(APP.CODE_GEN_TYPE, codeGenType)
+                .update();
+    }
+
     /**
      * 校验应用存在且属于当前用户
      */

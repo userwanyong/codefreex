@@ -104,8 +104,11 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
         try {
             if (Files.isDirectory(path)) {
                 try (var stream = Files.walk(path)) {
-                    stream.sorted(Comparator.reverseOrder()).forEach(this::deletePath);
+                    stream.filter(p -> !p.equals(path))
+                          .sorted(Comparator.reverseOrder())
+                          .forEach(this::deletePath);
                 }
+                Files.deleteIfExists(path);
             } else {
                 Files.deleteIfExists(path);
             }

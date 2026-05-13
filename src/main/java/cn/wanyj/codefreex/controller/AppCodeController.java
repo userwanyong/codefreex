@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -54,14 +55,17 @@ public class AppCodeController {
         }
 
         Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, deployKey);
-        List<String> filePaths = workflowFileToolService.listFiles(rootDir);
+        // Vue 项目构建后文件在 source/ 子目录下，需要从该目录读取并去掉 source/ 前缀
+        Path sourceDir = rootDir.resolve("source");
+        Path codeDir = Files.isDirectory(sourceDir) ? sourceDir : rootDir;
+        List<String> filePaths = workflowFileToolService.listFiles(codeDir);
         if (filePaths.isEmpty()) {
             return ResultUtils.success("");
         }
 
         StringBuilder sb = new StringBuilder();
         for (String filePath : filePaths) {
-            String content = workflowFileToolService.readFile(rootDir, filePath);
+            String content = workflowFileToolService.readFile(codeDir, filePath);
             if (content == null || content.isBlank()) {
                 continue;
             }

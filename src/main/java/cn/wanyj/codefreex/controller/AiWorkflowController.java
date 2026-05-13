@@ -20,6 +20,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * 工作流
  *
@@ -38,24 +41,45 @@ public class AiWorkflowController {
     @PostMapping(value = "/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @AuthCheck
     public SseEmitter generate(@Valid @RequestBody WorkflowGenerateRequest request) {
-        SseEmitter emitter = new SseEmitter(300_000L);
-        emitter.onTimeout(emitter::complete);
+        SseEmitter emitter = new SseEmitter(900_000L);
+        AtomicBoolean emitterCompleted = new AtomicBoolean(false);
+
+        emitter.onTimeout(() -> {
+            emitterCompleted.set(true);
+            emitter.complete();
+            log.warn("SSE emitter timed out, appId={}", request.getAppId());
+        });
+        emitter.onCompletion(() -> {
+            emitterCompleted.set(true);
+        });
+        emitter.onError(e -> {
+            emitterCompleted.set(true);
+            log.warn("SSE emitter error, appId={}: {}", request.getAppId(), e.getMessage());
+        });
 
         aiWorkflowService.generate(request.getAppId(), request.getMessage())
             .subscribe(
                 event -> {
+                    if (emitterCompleted.get()) return;
                     try {
                         emitter.send(SseEmitter.event().data(event.data()));
-                    } catch (Exception e) {
-                        log.warn("SSE send failed: {}", e.getMessage());
-                        emitter.completeWithError(e);
+                    } catch (IllegalStateException | IOException e) {
+                        emitterCompleted.set(true);
+                        log.warn("SSE send failed (client disconnected), appId={}: {}", request.getAppId(), e.getMessage());
+                        try { emitter.complete(); } catch (Exception ignored) {}
                     }
                 },
                 error -> {
-                    log.error("Workflow stream error", error);
-                    emitter.completeWithError(error);
+                    if (emitterCompleted.compareAndSet(false, true)) {
+                        log.error("Workflow stream error, appId={}", request.getAppId(), error);
+                        try { emitter.completeWithError(error); } catch (Exception ignored) {}
+                    }
                 },
-                emitter::complete
+                () -> {
+                    if (emitterCompleted.compareAndSet(false, true)) {
+                        emitter.complete();
+                    }
+                }
             );
 
         return emitter;
