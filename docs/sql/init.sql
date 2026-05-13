@@ -226,3 +226,16 @@ CREATE TABLE IF NOT EXISTS credit_transaction
     INDEX idx_sourceType (source_type),
     INDEX idx_userId_createTime (user_id, create_time)
 ) COMMENT '额度流水表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 12. 应用点赞记录表
+-- =============================================
+CREATE TABLE IF NOT EXISTS app_like
+(
+    id          BIGINT                              COMMENT 'id' PRIMARY KEY,
+    app_id      BIGINT                              NOT NULL COMMENT '应用id',
+    user_id     BIGINT                              NOT NULL COMMENT '用户id',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL COMMENT '创建时间',
+    UNIQUE KEY uk_app_user (app_id, user_id),
+    INDEX idx_userId (user_id)
+) COMMENT '应用点赞记录' COLLATE = utf8mb4_unicode_ci;

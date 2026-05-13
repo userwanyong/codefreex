@@ -1,6 +1,7 @@
 package cn.wanyj.codefreex.service.impl;
 
 import cn.hutool.core.util.IdUtil;
+import cn.wanyj.codefreex.auth.AuthRpcClient;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
@@ -29,11 +30,33 @@ import static cn.wanyj.codefreex.model.entity.table.InviteUserTableDef.INVITE_US
 @RequiredArgsConstructor
 public class InviteServiceImpl implements InviteService {
 
+    private static final int MAX_EXPIRE_HOURS_FOR_USER = 168; // 7天
+    private static final int MAX_USE_COUNT_FOR_USER = 3;
+    private static final java.util.Set<String> ADMIN_ROLES = java.util.Set.of("ROLE_ADMIN", "ROLE_PLATFORM_ADMIN");
+
     private final InviteMapper inviteMapper;
     private final InviteUserMapper inviteUserMapper;
+    private final AuthRpcClient authRpcClient;
 
     @Override
     public Invite generateInviteCode(Long userId, String batch, Integer expireHours, Integer maxUseCount) {
+        // 判断是否管理员
+        boolean isAdmin = isAdminUser(userId);
+
+        // 普通用户限制
+        if (!isAdmin) {
+            // 忽略批次号
+            batch = null;
+            // 有效期最大7天
+            if (expireHours != null && expireHours > MAX_EXPIRE_HOURS_FOR_USER) {
+                throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码有效期最长为7天");
+            }
+            // 最大使用次数3次
+            if (maxUseCount != null && maxUseCount > MAX_USE_COUNT_FOR_USER) {
+                throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码最多使用3次");
+            }
+        }
+
         Invite invite = new Invite();
         invite.setInviteCode(generateCode("INV"));
         invite.setUserId(userId);
@@ -173,6 +196,15 @@ public class InviteServiceImpl implements InviteService {
         );
 
         return PageResponse.of(page.getRecords(), page.getTotalRow(), (int) page.getPageNumber(), (int) page.getPageSize());
+    }
+
+    private boolean isAdminUser(Long userId) {
+        try {
+            java.util.List<String> roles = authRpcClient.getUserRoles(userId);
+            return roles != null && roles.stream().anyMatch(ADMIN_ROLES::contains);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String generateCode(String prefix) {

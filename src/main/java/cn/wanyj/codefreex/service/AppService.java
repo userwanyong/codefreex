@@ -107,4 +107,21 @@ public interface AppService {
      * @param codeGenType 代码生成类型
      */
     void updateCodeGenType(Long appId, String codeGenType);
+
+    /**
+     * 切换点赞（已赞则取消，未赞则点赞）
+     *
+     * @param appId  应用ID
+     * @param userId 用户ID
+     * @return true-点赞，false-取消点赞
+     */
+    boolean likeApp(Long appId, Long userId);
+
+    /**
+     * 查询用户是否已点赞
+     *
+     * @param appId  应用ID
+     * @param userId 用户ID
+     */
+    boolean isLiked(Long appId, Long userId);
 }

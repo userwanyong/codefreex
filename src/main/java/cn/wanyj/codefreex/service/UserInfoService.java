@@ -62,4 +62,20 @@ public interface UserInfoService {
      * 设置用户状态（启用/禁用）
      */
     void setUserStatus(Long userId, String status);
+
+    /**
+     * 更新用户头像
+     *
+     * @param userId    用户ID
+     * @param avatarUrl 头像URL
+     */
+    void updateAvatar(Long userId, String avatarUrl);
+
+    /**
+     * 更新用户昵称
+     *
+     * @param userId   用户ID
+     * @param nickname 昵称
+     */
+    void updateNickname(Long userId, String nickname);
 }

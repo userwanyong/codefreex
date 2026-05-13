@@ -189,4 +189,28 @@ public class UserInfoServiceImpl implements UserInfoService {
                 .set(USER_INFO.STATUS, status)
                 .update();
     }
+
+    @Override
+    public void updateAvatar(Long userId, String avatarUrl) {
+        UserInfo existing = getUserInfo(userId);
+        if (existing == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户信息不存在");
+        }
+        UpdateChain.of(UserInfo.class)
+                .where(USER_INFO.USER_ID.eq(userId))
+                .set(USER_INFO.AVATAR, avatarUrl)
+                .update();
+    }
+
+    @Override
+    public void updateNickname(Long userId, String nickname) {
+        UserInfo existing = getUserInfo(userId);
+        if (existing == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户信息不存在");
+        }
+        UpdateChain.of(UserInfo.class)
+                .where(USER_INFO.USER_ID.eq(userId))
+                .set(USER_INFO.NICKNAME, nickname)
+                .update();
+    }
 }

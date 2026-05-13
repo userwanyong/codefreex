@@ -4,9 +4,11 @@ import cn.hutool.core.util.IdUtil;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
+import cn.wanyj.codefreex.mapper.AppLikeMapper;
 import cn.wanyj.codefreex.mapper.AppMapper;
 import cn.wanyj.codefreex.mapper.ChatHistoryMapper;
 import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.entity.AppLike;
 import cn.wanyj.codefreex.model.dto.request.AppCreateRequest;
 import cn.wanyj.codefreex.model.dto.request.AppEditRequest;
 import cn.wanyj.codefreex.model.dto.request.AppQueryRequest;
@@ -32,6 +34,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 import static cn.wanyj.codefreex.model.entity.table.AppTableDef.APP;
+import static cn.wanyj.codefreex.model.entity.table.AppLikeTableDef.APP_LIKE;
 import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HISTORY;
 
 /**
@@ -44,6 +47,7 @@ import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HIS
 public class AppServiceImpl implements AppService {
 
     private final AppMapper appMapper;
+    private final AppLikeMapper appLikeMapper;
     private final ChatHistoryMapper chatHistoryMapper;
     private final ChatMemoryService chatMemoryService;
     private final AppStorageService appStorageService;
@@ -122,7 +126,17 @@ public class AppServiceImpl implements AppService {
                 throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "无权限查看该应用");
             }
         }
-        return toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId()));
+
+        // 浏览计数（公开应用每次查看 +1）
+        if (app.getIsPublic() != null && app.getIsPublic() == 1) {
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.VIEW_COUNT, (app.getViewCount() != null ? app.getViewCount() : 0) + 1)
+                    .update();
+        }
+
+        boolean liked = userId != null && isLiked(appId, userId);
+        return toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId()), liked);
     }
 
     @Override
@@ -149,7 +163,7 @@ public class AppServiceImpl implements AppService {
         );
 
         List<AppVO> voList = page.getRecords().stream()
-                .map(app -> toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId())))
+                .map(app -> toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId()), null))
                 .toList();
         return PageResponse.of(voList, page.getTotalRow(), (int) page.getPageNumber(), (int) page.getPageSize());
     }
@@ -197,7 +211,7 @@ public class AppServiceImpl implements AppService {
         Set<Long> userIds = apps.stream().map(App::getUserId).collect(Collectors.toSet());
         Map<Long, UserInfo> userInfoMap = fillUserInfoMap(userIds);
 
-        List<AppVO> voList = apps.stream().map(app -> toAppVO(app, userInfoMap, tagService.getAppTagNames(app.getId()))).toList();
+        List<AppVO> voList = apps.stream().map(app -> toAppVO(app, userInfoMap, tagService.getAppTagNames(app.getId()), null)).toList();
 
         String nextCursor = null;
         if (hasNext && !apps.isEmpty()) {
@@ -297,7 +311,7 @@ public class AppServiceImpl implements AppService {
     /**
      * App 转 AppVO（脱敏，含用户信息和标签）
      */
-    private AppVO toAppVO(App app, Map<Long, UserInfo> userInfoMap, List<String> tagNames) {
+    private AppVO toAppVO(App app, Map<Long, UserInfo> userInfoMap, List<String> tagNames, Boolean isLiked) {
         AppVO vo = new AppVO();
         vo.setId(app.getId());
         vo.setAppName(app.getAppName());
@@ -310,6 +324,7 @@ public class AppServiceImpl implements AppService {
         vo.setPriority(app.getPriority());
         vo.setViewCount(app.getViewCount());
         vo.setLikeCount(app.getLikeCount());
+        vo.setIsLiked(isLiked);
         vo.setTags(tagNames != null ? tagNames : Collections.emptyList());
         vo.setUserId(app.getUserId());
         vo.setInitPrompt(app.getInitPrompt());
@@ -326,6 +341,49 @@ public class AppServiceImpl implements AppService {
         }
 
         return vo;
+    }
+
+    @Override
+    public boolean likeApp(Long appId, Long userId) {
+        App app = appMapper.selectOneById(appId);
+        if (app == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "应用不存在");
+        }
+
+        AppLike existing = appLikeMapper.selectOneByQuery(
+                QueryWrapper.create().where(APP_LIKE.APP_ID.eq(appId)).and(APP_LIKE.USER_ID.eq(userId))
+        );
+
+        if (existing != null) {
+            // 取消点赞
+            appLikeMapper.deleteById(existing.getId());
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.LIKE_COUNT, Math.max(0, (app.getLikeCount() != null ? app.getLikeCount() : 0) - 1))
+                    .update();
+            return false;
+        } else {
+            // 点赞
+            AppLike appLike = new AppLike();
+            appLike.setAppId(appId);
+            appLike.setUserId(userId);
+            appLikeMapper.insert(appLike);
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.LIKE_COUNT, (app.getLikeCount() != null ? app.getLikeCount() : 0) + 1)
+                    .update();
+            return true;
+        }
+    }
+
+    @Override
+    public boolean isLiked(Long appId, Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        return appLikeMapper.selectOneByQuery(
+                QueryWrapper.create().where(APP_LIKE.APP_ID.eq(appId)).and(APP_LIKE.USER_ID.eq(userId))
+        ) != null;
     }
 
     /**

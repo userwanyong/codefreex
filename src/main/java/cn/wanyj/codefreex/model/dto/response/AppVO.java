@@ -41,6 +41,8 @@ public class AppVO {
 
     private Integer likeCount;
 
+    private Boolean isLiked;
+
     private List<String> tags;
 
     private Long userId;

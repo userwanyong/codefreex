@@ -123,4 +123,21 @@ public class AppController {
     public BaseResponse<List<String>> listFeaturedTags() {
         return ResultUtils.success(appService.listFeaturedTags());
     }
+
+    @Operation(summary = "切换点赞")
+    @PostMapping("/{appId}/like")
+    @AuthCheck
+    public BaseResponse<Boolean> likeApp(@PathVariable Long appId) {
+        Long userId = UserContext.getLoginUserId();
+        boolean liked = appService.likeApp(appId, userId);
+        return ResultUtils.success(liked);
+    }
+
+    @Operation(summary = "查询点赞状态")
+    @GetMapping("/{appId}/like/status")
+    @AuthCheck
+    public BaseResponse<Boolean> getLikeStatus(@PathVariable Long appId) {
+        Long userId = UserContext.getLoginUserId();
+        return ResultUtils.success(appService.isLiked(appId, userId));
+    }
 }
