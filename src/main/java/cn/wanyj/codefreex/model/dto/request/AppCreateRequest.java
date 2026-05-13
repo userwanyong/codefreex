@@ -33,9 +33,9 @@ public class AppCreateRequest {
     private String initPrompt;
 
     /**
-     * 标签列表
+     * 标签ID列表（关联预设标签）
      */
-    private List<String> tags;
+    private List<Long> tagIds;
 
     /**
      * 代码生成模式：html / multi_file / vue

@@ -158,7 +158,7 @@ public class AuthServiceImpl implements AuthService {
             }
 
             // 5. 创建本地用户信息
-            userInfoService.createUserInfo(registeredUser.getId(), inviterId);
+            userInfoService.createUserInfo(registeredUser.getId(), inviterId, nickname, null);
 
             // 6. 构建登录上下文
             LoginUserContext userContext = new LoginUserContext();
@@ -194,6 +194,13 @@ public class AuthServiceImpl implements AuthService {
                 throw new BusinessException(ResponseCode.SYSTEM_ERROR, "获取用户信息失败");
             }
             UserContext.setLoginUser(userContext);
+
+            // 同步用户昵称头像到本地
+            userInfoService.syncUserInfoFromRpc(authResult.getUserId(),
+                    userContext.getNickname(), userContext.getAvatar());
+
+            // 检查用户状态
+            checkUserStatus(authResult.getUserId());
 
             String accessToken = authRpcClient.generateToken(authResult.getUserId(), 1800);
             TokenResponse response = new TokenResponse();
@@ -299,6 +306,14 @@ public class AuthServiceImpl implements AuthService {
             if (existingUser != null) {
                 // 老用户：直接登录
                 UserContext.setLoginUser(existingUser);
+
+                // 同步用户昵称头像到本地
+                userInfoService.syncUserInfoFromRpc(existingUser.getUserId(),
+                        existingUser.getNickname(), existingUser.getAvatar());
+
+                // 检查用户状态
+                checkUserStatus(existingUser.getUserId());
+
                 String token = authRpcClient.generateToken(existingUser.getUserId(), 1800);
 
                 TokenResponse tokenResp = new TokenResponse();
@@ -392,7 +407,7 @@ public class AuthServiceImpl implements AuthService {
             }
 
             // 4. 创建本地用户信息
-            userInfoService.createUserInfo(registeredUser.getId(), inviterId);
+            userInfoService.createUserInfo(registeredUser.getId(), inviterId, nickname, avatar.isEmpty() ? null : avatar);
             stringRedisTemplate.delete(tempKey);
 
             LoginUserContext userContext = new LoginUserContext();
@@ -428,6 +443,16 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginUserContext getLoginUser() {
         return UserContext.getLoginUser();
+    }
+
+    /**
+     * 检查用户状态，被禁用的用户不允许登录
+     */
+    private void checkUserStatus(Long userId) {
+        cn.wanyj.codefreex.model.entity.UserInfo localUser = userInfoService.getUserInfo(userId);
+        if (localUser != null && "disabled".equals(localUser.getStatus())) {
+            throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "账号已被禁用，请联系管理员");
+        }
     }
 
     // ==================== 私有工具方法 ====================

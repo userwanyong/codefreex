@@ -33,7 +33,7 @@ public class ChatHistoryController {
     public BaseResponse<ChatHistoryCursorResponse> listChatHistory(
             @RequestParam Long appId,
             @RequestParam(required = false) String cursor,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "25") int size) {
         Long userId = UserContext.getLoginUserId();
         return ResultUtils.success(chatHistoryService.listChatHistory(appId, userId, cursor, size));
     }

@@ -1,6 +1,12 @@
 package cn.wanyj.codefreex.service;
 
+import cn.wanyj.codefreex.common.PageResponse;
+import cn.wanyj.codefreex.model.dto.request.UserQueryRequest;
 import cn.wanyj.codefreex.model.entity.UserInfo;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * @author wanyj
@@ -18,6 +24,11 @@ public interface UserInfoService {
     UserInfo createUserInfo(Long userId, Long inviterId);
 
     /**
+     * 注册时创建用户关联记录（含昵称头像）
+     */
+    UserInfo createUserInfo(Long userId, Long inviterId, String nickname, String avatar);
+
+    /**
      * 修改用户信息
      */
     boolean updateUserInfo(Long userId, UserInfo updateInfo);
@@ -26,4 +37,24 @@ public interface UserInfoService {
      * 增加用户额度
      */
     boolean addCredits(Long userId, int amount);
+
+    /**
+     * 从RPC同步用户昵称头像到本地
+     */
+    void syncUserInfoFromRpc(Long userId, String nickname, String avatar);
+
+    /**
+     * 批量查询用户信息
+     */
+    Map<Long, UserInfo> batchGetUserInfos(Set<Long> userIds);
+
+    /**
+     * 管理员分页查询用户列表
+     */
+    PageResponse<UserInfo> listUsersForAdmin(UserQueryRequest request);
+
+    /**
+     * 设置用户状态（启用/禁用）
+     */
+    void setUserStatus(Long userId, String status);
 }

@@ -10,28 +10,20 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 预设标签
+ *
  * @author wanyj
  */
 @Data
-@Table("user_info")
-public class UserInfo {
+@Table("tag")
+public class Tag {
 
     @Id(keyType = KeyType.Generator, value = KeyGenerators.snowFlakeId)
     private Long id;
 
-    private Long userId;
+    private String name;
 
-    private Long inviterId;
-
-    private String nickname;
-
-    private String avatar;
-
-    private Integer totalCredits;
-
-    private Integer remainingCredits;
-
-    private String status;
+    private Integer sortOrder;
 
     @Column(onInsertValue = "now()")
     private LocalDateTime createTime;

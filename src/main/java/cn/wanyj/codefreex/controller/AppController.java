@@ -17,6 +17,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * 应用管理接口（用户侧）
  *
@@ -77,7 +79,14 @@ public class AppController {
     @GetMapping("/featured/list")
     public BaseResponse<FeaturedAppResponse> listFeaturedApps(
             @RequestParam(required = false) String cursor,
-            @RequestParam(defaultValue = "10") int size) {
-        return ResultUtils.success(appService.listFeaturedApps(cursor, size));
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String tag) {
+        return ResultUtils.success(appService.listFeaturedApps(cursor, size, tag));
+    }
+
+    @Operation(summary = "获取精选应用的所有标签")
+    @GetMapping("/featured/tags")
+    public BaseResponse<List<String>> listFeaturedTags() {
+        return ResultUtils.success(appService.listFeaturedTags());
     }
 }

@@ -45,6 +45,10 @@ public class AppVO {
 
     private Long userId;
 
+    private String userName;
+
+    private String userAvatar;
+
     private LocalDateTime editTime;
 
     private LocalDateTime createTime;

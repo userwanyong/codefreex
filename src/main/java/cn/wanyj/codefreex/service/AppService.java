@@ -8,6 +8,8 @@ import cn.wanyj.codefreex.model.dto.response.AppVO;
 import cn.wanyj.codefreex.model.dto.response.FeaturedAppResponse;
 import cn.wanyj.codefreex.model.entity.App;
 
+import java.util.List;
+
 /**
  * 应用服务接口
  *
@@ -64,9 +66,15 @@ public interface AppService {
      *
      * @param cursor 游标（null 表示首页）
      * @param size   每页大小
+     * @param tag    标签筛选（可选）
      * @return 精选应用响应
      */
-    FeaturedAppResponse listFeaturedApps(String cursor, int size);
+    FeaturedAppResponse listFeaturedApps(String cursor, int size, String tag);
+
+    /**
+     * 获取精选应用的所有标签（去重）
+     */
+    List<String> listFeaturedTags();
 
     /**
      * 设置/取消精选（A-13，管理员）

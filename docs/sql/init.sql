@@ -14,13 +14,17 @@ CREATE TABLE IF NOT EXISTS user_info
     id                BIGINT                             COMMENT 'id' PRIMARY KEY,
     user_id           BIGINT                             NOT NULL COMMENT '用户id（关联认证服务用户）',
     inviter_id        BIGINT                             NULL COMMENT '邀请人用户id',
+    nickname          VARCHAR(128)                        NULL COMMENT '用户昵称（冗余自认证服务）',
+    avatar            VARCHAR(512)                        NULL COMMENT '用户头像URL（冗余自认证服务）',
     total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度（token）',
     remaining_credits INT          DEFAULT 0             NOT NULL COMMENT '剩余额度（token）',
+    status            VARCHAR(32)  DEFAULT 'active'      NOT NULL COMMENT '用户状态（active-正常/disabled-已禁用）',
     create_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
     update_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     is_delete         TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
     UNIQUE KEY uk_userId (user_id),
-    INDEX idx_inviterId (inviter_id)
+    INDEX idx_inviterId (inviter_id),
+    INDEX idx_status (status)
 ) COMMENT '用户关联表' COLLATE = utf8mb4_unicode_ci;
 
 -- =============================================
@@ -121,7 +125,6 @@ CREATE TABLE IF NOT EXISTS app
     priority      INT       DEFAULT 0                 NOT NULL COMMENT '优先级（越高越优先展示）',
     view_count    INT       DEFAULT 0                 NOT NULL COMMENT '浏览次数',
     like_count    INT       DEFAULT 0                 NOT NULL COMMENT '点赞数',
-    tags          JSON                               NULL COMMENT '标签列表（如 ["工具","效率"]）',
     user_id       BIGINT                             NOT NULL COMMENT '创建用户id',
     edit_time     DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '编辑时间',
     create_time   DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
@@ -174,3 +177,31 @@ CREATE TABLE IF NOT EXISTS user_usage
     INDEX idx_modelId (model_id),
     INDEX idx_userId_createTime (user_id, create_time)
 ) COMMENT '用户用量统计' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 9. 标签表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `tag`
+(
+    id          BIGINT                              COMMENT 'id' PRIMARY KEY,
+    name        VARCHAR(64)                         NOT NULL COMMENT '标签名称',
+    sort_order  INT         DEFAULT 0               NOT NULL COMMENT '排序（越小越靠前）',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_name (name, is_delete)
+) COMMENT '预设标签' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 10. 应用-标签关联表
+-- =============================================
+CREATE TABLE IF NOT EXISTS app_tag
+(
+    id          BIGINT                             COMMENT 'id' PRIMARY KEY,
+    app_id      BIGINT                             NOT NULL COMMENT '应用id',
+    tag_id      BIGINT                             NOT NULL COMMENT '标签id',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
+    is_delete   TINYINT   DEFAULT 0                NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_app_tag (app_id, tag_id, is_delete),
+    INDEX idx_tag_id (tag_id)
+) COMMENT '应用-标签关联' COLLATE = utf8mb4_unicode_ci;

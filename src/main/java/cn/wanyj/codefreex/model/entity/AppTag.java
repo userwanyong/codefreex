@@ -10,34 +10,23 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 应用-标签关联
+ *
  * @author wanyj
  */
 @Data
-@Table("user_info")
-public class UserInfo {
+@Table("app_tag")
+public class AppTag {
 
     @Id(keyType = KeyType.Generator, value = KeyGenerators.snowFlakeId)
     private Long id;
 
-    private Long userId;
+    private Long appId;
 
-    private Long inviterId;
-
-    private String nickname;
-
-    private String avatar;
-
-    private Integer totalCredits;
-
-    private Integer remainingCredits;
-
-    private String status;
+    private Long tagId;
 
     @Column(onInsertValue = "now()")
     private LocalDateTime createTime;
-
-    @Column(onInsertValue = "now()", onUpdateValue = "now()")
-    private LocalDateTime updateTime;
 
     private Integer isDelete;
 }
