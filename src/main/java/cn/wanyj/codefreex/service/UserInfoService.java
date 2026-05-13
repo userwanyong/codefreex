@@ -34,9 +34,14 @@ public interface UserInfoService {
     boolean updateUserInfo(Long userId, UserInfo updateInfo);
 
     /**
-     * 增加用户额度
+     * 增加用户码点
      */
     boolean addCredits(Long userId, int amount);
+
+    /**
+     * 扣减用户码点（余额不足抛异常）
+     */
+    boolean deductCredits(Long userId, int amount);
 
     /**
      * 从RPC同步用户昵称头像到本地

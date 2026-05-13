@@ -10,36 +10,35 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 用户用量统计实体
+ *
  * @author wanyj
  */
 @Data
-@Table("user_info")
-public class UserInfo {
+@Table("user_usage")
+public class UserUsage {
 
     @Id(keyType = KeyType.Generator, value = KeyGenerators.snowFlakeId)
     private Long id;
 
     private Long userId;
 
-    private Long inviterId;
+    private Long appId;
 
-    private String nickname;
+    private String modelId;
 
-    private String avatar;
+    private Integer inputTokens;
 
-    /** 累计获得码点 */
-    private Integer totalCredits;
+    private Integer outputTokens;
 
-    /** 剩余码点 */
-    private Integer remainingCredits;
+    private Integer totalTokens;
+
+    private Integer latency;
 
     private String status;
 
+    private String errorInfo;
+
     @Column(onInsertValue = "now()")
     private LocalDateTime createTime;
-
-    @Column(onInsertValue = "now()", onUpdateValue = "now()")
-    private LocalDateTime updateTime;
-
-    private Integer isDelete;
 }

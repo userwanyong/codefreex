@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS user_info
     inviter_id        BIGINT                             NULL COMMENT '邀请人用户id',
     nickname          VARCHAR(128)                        NULL COMMENT '用户昵称（冗余自认证服务）',
     avatar            VARCHAR(512)                        NULL COMMENT '用户头像URL（冗余自认证服务）',
-    total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度（token）',
-    remaining_credits INT          DEFAULT 0             NOT NULL COMMENT '剩余额度（token）',
+    total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度',
+    remaining_credits INT          DEFAULT 0             NOT NULL COMMENT '剩余额度',
     status            VARCHAR(32)  DEFAULT 'active'      NOT NULL COMMENT '用户状态（active-正常/disabled-已禁用）',
     create_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
     update_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS redeem
     redeem_code   VARCHAR(64)                        NOT NULL COMMENT '兑换码',
     user_id       BIGINT                             NOT NULL COMMENT '生成者用户id（管理员）',
     batch         VARCHAR(128)                       NULL COMMENT '批次号',
-    quota         INT                                NOT NULL COMMENT '兑换额度（token）',
+    quota         INT                                NOT NULL COMMENT '兑换码点数',
     status        VARCHAR(32)  DEFAULT 'unused'      NOT NULL COMMENT '状态（unused/partial/used/expired/disabled）',
     expire_time   DATETIME                           NULL COMMENT '过期时间（为空表示永不过期）',
     max_use_count INT      DEFAULT 1                 NOT NULL COMMENT '最大使用次数',
@@ -205,3 +205,24 @@ CREATE TABLE IF NOT EXISTS app_tag
     UNIQUE KEY uk_app_tag (app_id, tag_id, is_delete),
     INDEX idx_tag_id (tag_id)
 ) COMMENT '应用-标签关联' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 11. 额度流水表
+-- =============================================
+CREATE TABLE IF NOT EXISTS credit_transaction
+(
+    id            BIGINT                              COMMENT 'id' PRIMARY KEY,
+    user_id       BIGINT                              NOT NULL COMMENT '用户id',
+    type          VARCHAR(32)                         NOT NULL COMMENT '流水类型（recharge-充值/consume-消费/admin_adjust-管理员调整/gift-系统赠送）',
+    amount        INT                                 NOT NULL COMMENT '变动数量（正数增加，负数减少）',
+    balance_after INT                                  NOT NULL COMMENT '变动后余额',
+    source_type   VARCHAR(64)                         NULL COMMENT '来源类型（redeem-兑换码/ai_chat-AI对话/admin-管理员操作/register_gift-注册赠送）',
+    source_id     BIGINT                              NULL COMMENT '来源关联id（兑换码id/应用id等）',
+    description   VARCHAR(512)                        NULL COMMENT '描述',
+    operator_id   BIGINT                              NULL COMMENT '操作者id（管理员调整时记录）',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL COMMENT '创建时间',
+    INDEX idx_userId (user_id),
+    INDEX idx_type (type),
+    INDEX idx_sourceType (source_type),
+    INDEX idx_userId_createTime (user_id, create_time)
+) COMMENT '额度流水表' COLLATE = utf8mb4_unicode_ci;

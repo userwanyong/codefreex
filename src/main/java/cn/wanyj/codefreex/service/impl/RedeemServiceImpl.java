@@ -8,7 +8,11 @@ import cn.wanyj.codefreex.mapper.RedeemMapper;
 import cn.wanyj.codefreex.mapper.RedeemUserMapper;
 import cn.wanyj.codefreex.model.entity.Redeem;
 import cn.wanyj.codefreex.model.entity.RedeemUser;
+import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.enums.CreditSourceType;
+import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.enums.InviteStatus;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.RedeemService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -31,6 +35,7 @@ public class RedeemServiceImpl implements RedeemService {
     private final RedeemMapper redeemMapper;
     private final RedeemUserMapper redeemUserMapper;
     private final UserInfoService userInfoService;
+    private final CreditTransactionService creditTransactionService;
 
     @Override
     public Redeem generateRedeemCode(Long adminId, int quota, String batch, Integer expireHours, Integer maxUseCount) {
@@ -93,10 +98,23 @@ public class RedeemServiceImpl implements RedeemService {
                 .set(REDEEM.STATUS, newStatus)
                 .update();
 
-        // 6. 增加用户额度
+        // 6. 增加用户码点
         userInfoService.addCredits(userId, redeem.getQuota());
 
-        // 7. 创建兑换-用户关联记录
+        // 7. 记录码点流水
+        UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
+        creditTransactionService.recordTransaction(
+                userId,
+                CreditTransactionType.RECHARGE,
+                redeem.getQuota(),
+                updatedUserInfo.getRemainingCredits(),
+                CreditSourceType.REDEEM,
+                redeem.getId(),
+                "兑换码充值: " + redeemCode,
+                null
+        );
+
+        // 8. 创建兑换-用户关联记录
         RedeemUser redeemUser = new RedeemUser();
         redeemUser.setRedeemId(redeem.getId());
         redeemUser.setCreatorId(redeem.getUserId());

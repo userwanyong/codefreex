@@ -25,6 +25,7 @@ public class Redeem {
 
     private String batch;
 
+    /** 兑换码点数 */
     private Integer quota;
 
     private String status;

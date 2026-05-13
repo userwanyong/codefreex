@@ -6,11 +6,16 @@ import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.UserInfoMapper;
 import cn.wanyj.codefreex.model.dto.request.UserQueryRequest;
 import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.enums.CreditSourceType;
+import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -25,6 +30,8 @@ import static cn.wanyj.codefreex.model.entity.table.UserInfoTableDef.USER_INFO;
 public class UserInfoServiceImpl implements UserInfoService {
 
     private final UserInfoMapper userInfoMapper;
+    @Lazy
+    private final CreditTransactionService creditTransactionService;
 
     @Override
     public UserInfo getUserInfo(Long userId) {
@@ -68,14 +75,44 @@ public class UserInfoServiceImpl implements UserInfoService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean addCredits(Long userId, int amount) {
         UserInfo userInfo = getUserInfo(userId);
         if (userInfo == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户信息不存在");
         }
-        userInfo.setTotalCredits(userInfo.getTotalCredits() + amount);
-        userInfo.setRemainingCredits(userInfo.getRemainingCredits() + amount);
-        return userInfoMapper.update(userInfo) > 0;
+        int newTotal = userInfo.getTotalCredits() + amount;
+        int newRemaining = userInfo.getRemainingCredits() + amount;
+        UpdateChain.of(UserInfo.class)
+                .where(USER_INFO.USER_ID.eq(userId))
+                .set(USER_INFO.TOTAL_CREDITS, newTotal)
+                .set(USER_INFO.REMAINING_CREDITS, newRemaining)
+                .update();
+        return true;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deductCredits(Long userId, int amount) {
+        if (amount <= 0) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "扣减数量必须大于0");
+        }
+        UserInfo userInfo = getUserInfo(userId);
+        if (userInfo == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户信息不存在");
+        }
+        if (userInfo.getRemainingCredits() < amount) {
+            throw new BusinessException(ResponseCode.OPERATION_ERROR, "码点不足，请先兑换码点");
+        }
+        boolean updated = UpdateChain.of(UserInfo.class)
+                .where(USER_INFO.USER_ID.eq(userId))
+                .and(USER_INFO.REMAINING_CREDITS.ge(amount))
+                .set(USER_INFO.REMAINING_CREDITS, userInfo.getRemainingCredits() - amount)
+                .update();
+        if (!updated) {
+            throw new BusinessException(ResponseCode.OPERATION_ERROR, "码点不足，请先兑换码点");
+        }
+        return true;
     }
 
     @Override

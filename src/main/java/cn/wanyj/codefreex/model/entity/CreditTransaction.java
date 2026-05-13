@@ -10,36 +10,33 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 码点流水实体
+ *
  * @author wanyj
  */
 @Data
-@Table("user_info")
-public class UserInfo {
+@Table("credit_transaction")
+public class CreditTransaction {
 
     @Id(keyType = KeyType.Generator, value = KeyGenerators.snowFlakeId)
     private Long id;
 
     private Long userId;
 
-    private Long inviterId;
+    private String type;
 
-    private String nickname;
+    private Integer amount;
 
-    private String avatar;
+    private Integer balanceAfter;
 
-    /** 累计获得码点 */
-    private Integer totalCredits;
+    private String sourceType;
 
-    /** 剩余码点 */
-    private Integer remainingCredits;
+    private Long sourceId;
 
-    private String status;
+    private String description;
+
+    private Long operatorId;
 
     @Column(onInsertValue = "now()")
     private LocalDateTime createTime;
-
-    @Column(onInsertValue = "now()", onUpdateValue = "now()")
-    private LocalDateTime updateTime;
-
-    private Integer isDelete;
 }

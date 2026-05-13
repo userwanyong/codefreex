@@ -1,6 +1,7 @@
 package cn.wanyj.codefreex.controller;
 
 import cn.wanyj.codefreex.auth.AuthRpcClient;
+import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
 import cn.wanyj.codefreex.common.BaseResponse;
 import cn.wanyj.codefreex.common.PageResponse;
@@ -8,12 +9,18 @@ import cn.wanyj.codefreex.common.ResultUtils;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.model.dto.LoginUserContext;
+import cn.wanyj.codefreex.model.dto.request.CreditAdjustRequest;
 import cn.wanyj.codefreex.model.dto.request.UserQueryRequest;
 import cn.wanyj.codefreex.model.dto.response.AdminUserVO;
+import cn.wanyj.codefreex.model.entity.CreditTransaction;
 import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.enums.CreditSourceType;
+import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,6 +39,7 @@ public class UserAdminController {
 
     private final UserInfoService userInfoService;
     private final AuthRpcClient authRpcClient;
+    private final CreditTransactionService creditTransactionService;
 
     @Operation(summary = "管理员分页查询用户")
     @GetMapping("/list")
@@ -92,6 +100,56 @@ public class UserAdminController {
             @RequestParam Long userId,
             @RequestParam String status) {
         userInfoService.setUserStatus(userId, status);
+        return ResultUtils.success(true);
+    }
+
+    @Operation(summary = "管理员查询用户码点流水")
+    @GetMapping("/{userId}/credit-transactions")
+    @AuthCheck(roles = {"ROLE_ADMIN", "ROLE_PLATFORM_ADMIN"})
+    public BaseResponse<PageResponse<CreditTransaction>> listCreditTransactions(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+        return ResultUtils.success(creditTransactionService.listTransactions(userId, pageNum, pageSize));
+    }
+
+    @Operation(summary = "管理员分页查询所有码点流水")
+    @GetMapping("/credit-transactions")
+    @AuthCheck(roles = {"ROLE_ADMIN", "ROLE_PLATFORM_ADMIN"})
+    public BaseResponse<PageResponse<CreditTransaction>> listAllCreditTransactions(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) String type) {
+        return ResultUtils.success(creditTransactionService.listAllTransactions(pageNum, pageSize, userId, type));
+    }
+
+    @Operation(summary = "管理员调整用户码点")
+    @PostMapping("/adjust-credits")
+    @AuthCheck(roles = {"ROLE_ADMIN", "ROLE_PLATFORM_ADMIN"})
+    public BaseResponse<Boolean> adjustCredits(@Valid @RequestBody CreditAdjustRequest request) {
+        Long operatorId = UserContext.getLoginUserId();
+        int amount = request.getAmount();
+
+        if (amount > 0) {
+            userInfoService.addCredits(request.getUserId(), amount);
+        } else if (amount < 0) {
+            userInfoService.deductCredits(request.getUserId(), -amount);
+        }
+
+        // 记录流水
+        UserInfo updatedUserInfo = userInfoService.getUserInfo(request.getUserId());
+        creditTransactionService.recordTransaction(
+                request.getUserId(),
+                amount > 0 ? CreditTransactionType.ADMIN_ADJUST : CreditTransactionType.ADMIN_ADJUST,
+                amount,
+                updatedUserInfo.getRemainingCredits(),
+                CreditSourceType.ADMIN,
+                null,
+                request.getDescription() != null ? request.getDescription() : "管理员调整码点",
+                operatorId
+        );
+
         return ResultUtils.success(true);
     }
 }

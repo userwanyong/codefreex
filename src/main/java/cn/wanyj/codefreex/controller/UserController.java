@@ -4,9 +4,12 @@ import cn.wanyj.codefreex.auth.AuthRpcClient;
 import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
 import cn.wanyj.codefreex.common.BaseResponse;
+import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.common.ResultUtils;
 import cn.wanyj.codefreex.model.dto.LoginUserContext;
+import cn.wanyj.codefreex.model.entity.CreditTransaction;
 import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,6 +27,7 @@ public class UserController {
 
     private final UserInfoService userInfoService;
     private final AuthRpcClient authRpcClient;
+    private final CreditTransactionService creditTransactionService;
 
     @Operation(summary = "获取用户关联信息")
     @GetMapping("/info")
@@ -39,5 +43,15 @@ public class UserController {
     public BaseResponse<java.util.List<String>> getUserRoles() {
         Long userId = UserContext.getLoginUserId();
         return ResultUtils.success(authRpcClient.getUserRoles(userId));
+    }
+
+    @Operation(summary = "查询我的码点流水")
+    @GetMapping("/credit-transactions")
+    @AuthCheck
+    public BaseResponse<PageResponse<CreditTransaction>> listMyCreditTransactions(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+        Long userId = UserContext.getLoginUserId();
+        return ResultUtils.success(creditTransactionService.listTransactions(userId, pageNum, pageSize));
     }
 }
