@@ -42,6 +42,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
 
+import dev.langchain4j.model.chat.response.ChatResponseMetadata;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -112,10 +114,21 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private final CodePersistStrategyRegistry codePersistStrategyRegistry;
     private final WorkflowFileToolService workflowFileToolService;
     private final ProjectBuildService projectBuildService;
+    private final UserUsageService userUsageService;
     private final ObjectMapper objectMapper;
     private final AppRuntimeConfig.WorkflowProperties workflowProperties;
 
     private final Map<Long, WorkflowStatusResponse> statusMap = new ConcurrentHashMap<>();
+
+    /** 工作流级别 token 用量累加器，key 为 appId */
+    private final Map<Long, TokenUsageAccumulator> tokenAccumulatorMap = new ConcurrentHashMap<>();
+
+    private static class TokenUsageAccumulator {
+        int inputTokens = 0;
+        int outputTokens = 0;
+        int totalTokens = 0;
+        String modelId = null;
+    }
 
     @Override
     public Flux<ServerSentEvent<String>> generate(Long appId, String message) {
@@ -125,6 +138,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         return Flux.<ServerSentEvent<String>>create(sink -> {
             ChatHistory userHistory = null;
+            long startTime = System.currentTimeMillis();
+            tokenAccumulatorMap.put(appId, new TokenUsageAccumulator());
             try {
                 appService.updateAppStatus(appId, AppStatus.GENERATING.getValue());
                 userHistory = chatHistoryService.saveUserMessage(appId, userId, message);
@@ -167,6 +182,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     appService.updateAppStatus(appId, AppStatus.DRAFT.getValue());
                     updateStatus(appId, "blocked", finalState.currentNode(), finalState.route(),
                             finalState.retryCount(), errorMessage);
+                    recordWorkflowUsage(appId, userId, startTime, "fail", errorMessage);
                     emitError(sink, errorMessage);
                     emitDone(sink);
                     sink.complete();
@@ -185,6 +201,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     log.info("[{}] ========= 直接对话完成, appId={} =========", "Workflow", appId);
                     updateStatus(appId, "completed", NODE_CHAT_DIRECT, app.getCodeGenType(),
                             finalState.retryCount(), "chat completed");
+                    recordWorkflowUsage(appId, userId, startTime, "success", null);
                     emitDone(sink);
                     sink.complete();
                     return;
@@ -216,12 +233,13 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                             finalState.retryCount(), "workflow completed");
                 }
 
+                recordWorkflowUsage(appId, userId, startTime, "success", null);
                 emitDone(sink);
-                sink.complete();
             } catch (Exception e) {
                 log.error("workflow failed, appId={}", appId, e);
                 appService.updateAppStatus(appId, AppStatus.DRAFT.getValue());
                 updateStatus(appId, "failed", "error", app.getCodeGenType(), 0, e.getMessage());
+                recordWorkflowUsage(appId, userId, startTime, "fail", e.getMessage());
                 if (userHistory != null) {
                     persistFailure(appId, userId, userHistory, "Workflow failed: " + e.getMessage());
                 }
@@ -326,7 +344,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                                                     FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> promptReviewNode 开始执行, appId={}", "Workflow", userHistory.getAppId());
         emitToolRequest(sink, NODE_PROMPT_REVIEW, Map.of("message", message));
-        ReviewResult reviewResult = reviewPrompt(message);
+        ReviewResult reviewResult = reviewPrompt(message, userHistory.getAppId());
         if (reviewResult.safe()) {
             log.info("[{}] <<< promptReviewNode 审核通过, appId={}", "Workflow", userHistory.getAppId());
         } else {
@@ -348,7 +366,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                                                       FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> intentClassifyNode 开始执行, appId={}", "Workflow", userHistory.getAppId());
         emitToolRequest(sink, NODE_INTENT_CLASSIFY, Map.of("message", message));
-        String intent = classifyIntent(message);
+        String intent = classifyIntent(message, userHistory.getAppId());
         String label = switch (intent) {
             case "visual_edit" -> "可视化编辑";
             case "chat" -> "普通对话";
@@ -363,10 +381,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 "statusMessage", "intent classified: " + label);
     }
 
-    private String classifyIntent(String message) {
+    private String classifyIntent(String message, Long appId) {
         try {
             String prompt = promptLoader.load("workflow_intent.txt") + message;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
+            accumulateTokens(appId, response);
             JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
             String intent = node.path("intent").asText("coding");
             if (List.of("coding", "visual_edit", "chat").contains(intent)) {
@@ -404,6 +423,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
             @Override
             public void onCompleteResponse(ChatResponse completeResponse) {
+                accumulateTokens(appId, completeResponse);
                 latch.countDown();
             }
 
@@ -464,6 +484,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     .toolSpecifications(toolSpecs)
                     .build();
             ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            accumulateTokens(appId, chatResponse);
             AiMessage aiMessage = chatResponse.aiMessage();
             messages.add(aiMessage);
 
@@ -561,6 +582,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         try {
             String prompt = promptLoader.load("workflow_image_plan.txt") + message + "\n\nPRD:\n" + state.prd();
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
+            accumulateTokens(userHistory.getAppId(), response);
             JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
             JsonNode items = node.path("items");
             if (items.isArray() && !items.isEmpty()) {
@@ -599,6 +621,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     Map.of("plan", state.imagePlan(), "message", message));
             String prompt = promptLoader.load("workflow_image_fetch.txt") + planJson;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
+            accumulateTokens(userHistory.getAppId(), response);
             JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
             JsonNode assetsNode = node.path("assets");
             if (assetsNode.isArray() && !assetsNode.isEmpty()) {
@@ -697,7 +720,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         if (hasExistingFiles) {
             // 后续迭代：使用工具调用模式，AI 自主读取和修改文件
             log.info("[{}] codeGenNode 检测到已有文件，进入迭代修改模式, appId={}", "Workflow", appId);
-            generatedContent = runCodeGenIteration(rootDir, state.enhancedPrompt());
+            generatedContent = runCodeGenIteration(rootDir, state.enhancedPrompt(), appId);
         } else {
             // 初次生成：保持流式生成
             boolean[] incrementalSaved = {false};
@@ -736,7 +759,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /**
      * 后续迭代：AI 通过工具调用读取现有文件并修改
      */
-    private String runCodeGenIteration(Path rootDir, String enhancedPrompt) {
+    private String runCodeGenIteration(Path rootDir, String enhancedPrompt, Long appId) {
         WorkflowFileTools fileTools = new WorkflowFileTools(rootDir, workflowFileToolService);
         List<ToolSpecification> toolSpecs = ToolSpecifications.toolSpecificationsFrom(fileTools);
 
@@ -752,6 +775,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     .toolSpecifications(toolSpecs)
                     .build();
             ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            accumulateTokens(appId, chatResponse);
             AiMessage aiMessage = chatResponse.aiMessage();
             messages.add(aiMessage);
 
@@ -813,6 +837,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     .toolSpecifications(toolSpecs)
                     .build();
             ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            accumulateTokens(appId, chatResponse);
             AiMessage aiMessage = chatResponse.aiMessage();
             messages.add(aiMessage);
 
@@ -916,10 +941,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         };
     }
 
-    private ReviewResult reviewPrompt(String prompt) {
+    private ReviewResult reviewPrompt(String prompt, Long appId) {
         try {
             String reviewPromptText = promptLoader.load("prompt_review.txt") + prompt;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(reviewPromptText));
+            accumulateTokens(appId, response);
             JsonNode node = objectMapper.readTree(extractJson(response.aiMessage().text().trim()));
             return new ReviewResult(
                     node.path("safe").asBoolean(true),
@@ -936,6 +962,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     + "\n代码生成类型: " + (app.getCodeGenType() == null ? "html" : app.getCodeGenType());
             String prompt = promptLoader.load("workflow_prd_gen.txt") + appInfo;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
+            accumulateTokens(app.getId(), response);
             String prd = response.aiMessage().text().trim();
             if (!prd.isBlank()) {
                 return prd;
@@ -970,6 +997,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             }
             String prompt = promptLoader.load("workflow_prompt_enhance.txt") + context;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
+            accumulateTokens(app.getId(), response);
             String enhanced = response.aiMessage().text().trim();
             if (!enhanced.isBlank()) {
                 return enhanced;
@@ -1002,6 +1030,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             }
             sb.append("\n\n用户原始需求：\n").append(message);
             ChatResponse response = reviewChatModel.chat(UserMessage.from(sb.toString()));
+            accumulateTokens(app.getId(), response);
             AiMessage aiMessage = response.aiMessage();
             String responseText = aiMessage.text();
             if (responseText == null || responseText.isBlank()) {
@@ -1067,6 +1096,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
             @Override
             public void onCompleteResponse(ChatResponse completeResponse) {
+                accumulateTokens(appId, completeResponse);
                 latch.countDown();
             }
 
@@ -1380,6 +1410,53 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
     private void emitDone(FluxSink<ServerSentEvent<String>> sink) {
         emitEvent(sink, "done", "");
+    }
+
+    private void recordWorkflowUsage(Long appId, Long userId, long startTime, String status, String errorInfo) {
+        try {
+            int latency = (int) (System.currentTimeMillis() - startTime);
+            TokenUsageAccumulator acc = tokenAccumulatorMap.remove(appId);
+            if (acc != null) {
+                userUsageService.recordUsage(userId, appId, acc.modelId,
+                        acc.inputTokens, acc.outputTokens, acc.totalTokens, latency, status, errorInfo);
+            } else {
+                userUsageService.recordUsage(userId, appId, null, 0, 0, 0, latency, status, errorInfo);
+            }
+        } catch (Exception e) {
+            log.warn("记录工作流用量统计失败: appId={}", appId, e);
+        }
+    }
+
+    /** 从 ChatResponse 中提取 token 用量并累加到 appId 对应的累加器 */
+    private void accumulateTokens(Long appId, ChatResponse response) {
+        if (response == null || appId == null) {
+            return;
+        }
+        try {
+            ChatResponseMetadata metadata = response.metadata();
+            if (metadata == null) {
+                return;
+            }
+            dev.langchain4j.model.output.TokenUsage tu = metadata.tokenUsage();
+            if (tu == null) {
+                return;
+            }
+            TokenUsageAccumulator acc = tokenAccumulatorMap.computeIfAbsent(appId, k -> new TokenUsageAccumulator());
+            if (tu.inputTokenCount() != null) {
+                acc.inputTokens += tu.inputTokenCount();
+            }
+            if (tu.outputTokenCount() != null) {
+                acc.outputTokens += tu.outputTokenCount();
+            }
+            if (tu.totalTokenCount() != null) {
+                acc.totalTokens += tu.totalTokenCount();
+            }
+            if (metadata.modelName() != null && !metadata.modelName().isBlank()) {
+                acc.modelId = metadata.modelName();
+            }
+        } catch (Exception e) {
+            log.warn("累加 token 用量失败: appId={}", appId, e);
+        }
     }
 
     private void emitEvent(FluxSink<ServerSentEvent<String>> sink, String type, Object data) {

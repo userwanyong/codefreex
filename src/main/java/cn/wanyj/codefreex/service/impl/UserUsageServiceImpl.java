@@ -38,7 +38,7 @@ public class UserUsageServiceImpl implements UserUsageService {
     }
 
     @Override
-    public PageResponse<UserUsage> listUsagesForAdmin(int pageNum, int pageSize, Long userId, Long appId) {
+    public PageResponse<UserUsage> listUsagesForAdmin(int pageNum, int pageSize, Long userId, Long appId, String modelId, String status) {
         pageSize = Math.min(pageSize, 50);
         QueryWrapper query = QueryWrapper.create();
 
@@ -47,6 +47,12 @@ public class UserUsageServiceImpl implements UserUsageService {
         }
         if (appId != null) {
             query.and(USER_USAGE.APP_ID.eq(appId));
+        }
+        if (modelId != null && !modelId.isBlank()) {
+            query.and(USER_USAGE.MODEL_ID.eq(modelId));
+        }
+        if (status != null && !status.isBlank()) {
+            query.and(USER_USAGE.STATUS.eq(status));
         }
         query.orderBy(USER_USAGE.CREATE_TIME.desc());
 

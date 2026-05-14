@@ -20,5 +20,5 @@ public interface UserUsageService {
     /**
      * 管理员分页查询用量
      */
-    PageResponse<UserUsage> listUsagesForAdmin(int pageNum, int pageSize, Long userId, Long appId);
+    PageResponse<UserUsage> listUsagesForAdmin(int pageNum, int pageSize, Long userId, Long appId, String modelId, String status);
 }
