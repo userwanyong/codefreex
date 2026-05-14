@@ -54,8 +54,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -123,6 +127,29 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /** 工作流级别 token 用量累加器，key 为 appId */
     private final Map<Long, TokenUsageAccumulator> tokenAccumulatorMap = new ConcurrentHashMap<>();
 
+    /** 事件缓存：appId -> 序列化后的事件列表（用于断线重连时回放） */
+    private final Map<Long, List<String>> eventCache = new ConcurrentHashMap<>();
+
+    /** 事件缓存上限，超过后合并最早的 ai_r 分块 */
+    private static final int MAX_CACHE_EVENTS = 5000;
+
+    /** 重连订阅者：appId -> 消费者列表（实时推送新事件） */
+    private final Map<Long, List<Consumer<String>>> reconnectSubscribers = new ConcurrentHashMap<>();
+
+    /** FluxSink -> appId 映射（用于流式回调线程中查找 appId，因 ThreadLocal 不可跨线程） */
+    private final Map<FluxSink<ServerSentEvent<String>>, Long> sinkAppIdMap = new ConcurrentHashMap<>();
+
+    /** 延迟清理调度器 */
+    private static final ScheduledExecutorService CLEANUP_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "workflow-cleanup");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 当前工作流线程关联的 appId */
+    private static final ThreadLocal<Long> CURRENT_APP_ID = new ThreadLocal<>();
+
     private static class TokenUsageAccumulator {
         int inputTokens = 0;
         int outputTokens = 0;
@@ -140,6 +167,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             ChatHistory userHistory = null;
             long startTime = System.currentTimeMillis();
             tokenAccumulatorMap.put(appId, new TokenUsageAccumulator());
+            // 初始化事件缓存
+            eventCache.put(appId, new ArrayList<>());
+            sinkAppIdMap.put(sink, appId);
+            CURRENT_APP_ID.set(appId);
             try {
                 appService.updateAppStatus(appId, AppStatus.GENERATING.getValue());
                 userHistory = chatHistoryService.saveUserMessage(appId, userId, message);
@@ -153,10 +184,6 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
                 WorkflowGraphState finalState = null;
                 for (NodeOutput<WorkflowGraphState> output : graph.stream(Map.of("message", message), runnableConfig)) {
-                    if (sink.isCancelled()) {
-                        log.warn("[{}] FluxSink 已取消，终止工作流, appId={}", "Workflow", appId);
-                        return;
-                    }
                     finalState = output.state();
                     updateStatus(
                             appId,
@@ -169,10 +196,6 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
                 if (finalState == null) {
                     throw new RuntimeException("Workflow produced no state");
-                }
-                if (sink.isCancelled()) {
-                    log.warn("[{}] FluxSink 已取消，跳过后续处理, appId={}", "Workflow", appId);
-                    return;
                 }
 
                 if (finalState.blocked() || !finalState.reviewSafe()) {
@@ -243,29 +266,35 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 if (userHistory != null) {
                     persistFailure(appId, userId, userHistory, "Workflow failed: " + e.getMessage());
                 }
+                try {
+                    emitError(sink, e.getMessage());
+                    emitDone(sink);
+                } catch (Exception ignored) {
+                }
                 if (!sink.isCancelled()) {
-                    try {
-                        emitError(sink, e.getMessage());
-                        emitDone(sink);
-                    } catch (Exception ignored) {
-                    }
                     sink.complete();
                 }
+            } finally {
+                CURRENT_APP_ID.remove();
+                sinkAppIdMap.remove(sink);
+                // 延迟清理缓存，给重连客户端足够的回放时间
+                scheduleCacheCleanup(appId);
             }
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @Override
     public WorkflowStatusResponse getStatus(Long appId) {
-        return statusMap.computeIfAbsent(appId, id -> {
-            WorkflowStatusResponse response = new WorkflowStatusResponse();
-            response.setAppId(id);
-            response.setStatus("idle");
-            response.setCurrentNode("none");
-            response.setRetryCount(0);
-            response.setUpdateTime(LocalDateTime.now());
-            return response;
+        WorkflowStatusResponse response = statusMap.computeIfAbsent(appId, id -> {
+            WorkflowStatusResponse r = new WorkflowStatusResponse();
+            r.setAppId(appId);
+            r.setStatus("idle");
+            return r;
         });
+        // 填充缓存事件数
+        List<String> cache = eventCache.get(appId);
+        response.setCachedEventCount(cache != null ? cache.size() : 0);
+        return response;
     }
 
     private CompiledGraph<WorkflowGraphState> buildWorkflowGraph(Long appId, Long userId, App app, String message,
@@ -1401,7 +1430,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private void emitAiResponse(FluxSink<ServerSentEvent<String>> sink, String content) {
-        emitEvent(sink, "ai_response", content);
+        emitEvent(sink, "ai_r", content);
     }
 
     private void emitError(FluxSink<ServerSentEvent<String>> sink, String message) {
@@ -1460,15 +1489,87 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private void emitEvent(FluxSink<ServerSentEvent<String>> sink, String type, Object data) {
-        if (sink.isCancelled()) {
-            throw new RuntimeException("FluxSink cancelled, aborting workflow");
-        }
+        String payload;
         try {
-            String payload = objectMapper.writeValueAsString(new WorkflowEvent(type, data));
-            sink.next(ServerSentEvent.<String>builder().data(payload).build());
+            payload = objectMapper.writeValueAsString(new WorkflowEvent(type, data));
         } catch (Exception e) {
-            log.warn("[Workflow] SSE 发送失败 (type={}): {}", type, e.getMessage());
-            throw new RuntimeException("SSE emit failed, client likely disconnected", e);
+            log.warn("[Workflow] JSON序列化失败 (type={}): {}", type, e.getMessage());
+            return;
+        }
+
+        // 1. 写入事件缓存（无论客户端是否连接）
+        // 优先从 ThreadLocal 获取 appId（主线程），若为 null 则从 sink 映射获取（流式回调线程）
+        Long appId = CURRENT_APP_ID.get();
+        if (appId == null) {
+            appId = sinkAppIdMap.get(sink);
+        }
+        if (appId != null) {
+            List<String> cache = eventCache.get(appId);
+            if (cache != null) {
+                synchronized (cache) {
+                    cache.add(payload);
+                    // 缓存超限时，将最早的多个 ai_r 合并为一个事件
+                    if (cache.size() > MAX_CACHE_EVENTS) {
+                        mergeEarliestAiResponses(cache);
+                    }
+                }
+            }
+
+            // 2. 通知所有重连订阅者
+            notifyReconnectSubscribers(appId, payload);
+        }
+
+        // 3. 尝试发送给原始订阅者（最佳努力）
+        if (!sink.isCancelled()) {
+            try {
+                sink.next(ServerSentEvent.<String>builder().data(payload).build());
+            } catch (Exception e) {
+                log.debug("[Workflow] 原始SSE发送失败, 客户端已断连: {}", e.getMessage());
+            }
+        }
+    }
+
+    /** 将缓存中最早的多个连续 ai_r 合并为一个，保留完整文本不丢失 */
+    private void mergeEarliestAiResponses(List<String> cache) {
+        // 找到第一段连续的 ai_r
+        int start = -1;
+        int end = -1;
+        for (int i = 0; i < cache.size(); i++) {
+            if (cache.get(i).contains("\"type\":\"ai_r\"")) {
+                if (start < 0) {
+                    start = i;
+                }
+                end = i;
+            } else if (start >= 0) {
+                break; // 遇到非 ai_r，停止
+            }
+        }
+        if (start < 0 || start == end) {
+            return; // 没有或只有一个，无需合并
+        }
+
+        // 提取并拼接 data 字段
+        StringBuilder mergedData = new StringBuilder();
+        for (int i = start; i <= end; i++) {
+            try {
+                WorkflowEvent evt = objectMapper.readValue(cache.get(i), WorkflowEvent.class);
+                if (evt.getData() != null) {
+                    mergedData.append(evt.getData().toString());
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // 用一个合并后的事件替换
+        String merged = null;
+        try {
+            merged = objectMapper.writeValueAsString(new WorkflowEvent("ai_r", mergedData.toString()));
+        } catch (Exception ignored) {}
+        if (merged != null) {
+            // 移除 [start, end] 范围，插入合并事件
+            for (int i = end; i >= start; i--) {
+                cache.remove(i);
+            }
+            cache.add(start, merged);
         }
     }
 
@@ -1478,6 +1579,76 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** 通知所有重连订阅者（安全：不抛异常，不影响工作流执行） */
+    private void notifyReconnectSubscribers(Long appId, String payload) {
+        try {
+            if (appId == null) {
+                return;
+            }
+            List<Consumer<String>> subscribers = reconnectSubscribers.get(appId);
+            if (subscribers == null || subscribers.isEmpty()) {
+                return;
+            }
+            // CopyOnWriteArrayList 的迭代器是快照，支持并发修改
+            List<Consumer<String>> deadSubscribers = new ArrayList<>();
+            for (Consumer<String> subscriber : subscribers) {
+                try {
+                    subscriber.accept(payload);
+                } catch (Exception e) {
+                    deadSubscribers.add(subscriber);
+                    log.debug("[Workflow] 重连订阅者发送失败，已移除: appId={}, error={}", appId, e.getMessage());
+                }
+            }
+            if (!deadSubscribers.isEmpty()) {
+                subscribers.removeAll(deadSubscribers);
+            }
+        } catch (Exception e) {
+            // 订阅者通知失败绝不能中断工作流
+            log.debug("[Workflow] 通知重连订阅者异常（已忽略）: {}", e.getMessage());
+        }
+    }
+
+    /** 注册重连订阅者 */
+    @Override
+    public void registerReconnectSubscriber(Long appId, Consumer<String> subscriber) {
+        List<Consumer<String>> list = reconnectSubscribers.computeIfAbsent(appId, k -> new CopyOnWriteArrayList<>());
+        list.add(subscriber);
+        log.info("[Workflow] 注册重连订阅者: appId={}, 当前订阅者数={}", appId, list.size());
+    }
+
+    /** 移除重连订阅者 */
+    @Override
+    public void unregisterReconnectSubscriber(Long appId, Consumer<String> subscriber) {
+        List<Consumer<String>> subscribers = reconnectSubscribers.get(appId);
+        if (subscribers != null) {
+            subscribers.remove(subscriber);
+            if (subscribers.isEmpty()) {
+                reconnectSubscribers.remove(appId, subscribers);
+            }
+        }
+    }
+
+    /** 获取缓存的全部事件（快照） */
+    @Override
+    public List<String> getCachedEvents(Long appId) {
+        List<String> cache = eventCache.get(appId);
+        if (cache == null) {
+            return List.of();
+        }
+        synchronized (cache) {
+            return new ArrayList<>(cache);
+        }
+    }
+
+    /** 延迟清理事件缓存和订阅者 */
+    private void scheduleCacheCleanup(Long appId) {
+        CLEANUP_SCHEDULER.schedule(() -> {
+            eventCache.remove(appId);
+            reconnectSubscribers.remove(appId);
+            log.debug("[Workflow] 已清理事件缓存, appId={}", appId);
+        }, 5, TimeUnit.MINUTES);
     }
 
     private void updateStatus(Long appId, String status, String currentNode, String route,
@@ -1669,7 +1840,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         for (String rawLine : code.split("\n")) {
             String trimmed = rawLine.trim();
-            if (trimmed.isEmpty()) continue;
+            if (trimmed.isEmpty()) {
+                continue;
+            }
 
             // ---- <style> / <script> 块结束 ----
             if (inStyle && trimmed.startsWith("</style")) {
@@ -1713,8 +1886,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     boolean sameLineClose = !selfClose && !voidTag && trimmed.contains("</");
                     if (!selfClose && !voidTag && !sameLineClose) {
                         level++;
-                        if ("style".equals(tag)) inStyle = true;
-                        if ("script".equals(tag)) inScript = true;
+                        if ("style".equals(tag)) {
+                            inStyle = true;
+                        }
+                        if ("script".equals(tag)) {
+                            inScript = true;
+                        }
                     }
                 }
             }

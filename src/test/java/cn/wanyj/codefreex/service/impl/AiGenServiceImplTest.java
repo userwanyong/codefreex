@@ -122,7 +122,7 @@ class AiGenServiceImplTest {
             var flux = aiGenService.chatToGenCode(appId, "test");
 
             StepVerifier.create(flux)
-                    .expectNextCount(3) // 2 ai_response + done
+                    .expectNextCount(3) // 2 ai_r + done
                     .verifyComplete();
 
             verify(chatHistoryService).saveUserMessage(appId, userId, "test");

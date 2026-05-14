@@ -113,7 +113,7 @@ class AiGenServiceIntegrationTest {
             var flux = aiGenService.chatToGenCode(appId, "build a hello page");
 
             StepVerifier.create(flux)
-                    .expectNextCount(2) // ai_response + done
+                    .expectNextCount(2) // ai_r + done
                     .verifyComplete();
 
             // Verify both messages in DB
