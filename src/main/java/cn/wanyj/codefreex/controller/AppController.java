@@ -16,8 +16,10 @@ import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.model.entity.FeaturedApplication;
 import cn.wanyj.codefreex.service.AppService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
+import cn.wanyj.codefreex.service.FeaturedApplicationService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +43,7 @@ public class AppController {
     private final AppService appService;
     private final UserInfoService userInfoService;
     private final CreditTransactionService creditTransactionService;
+    private final FeaturedApplicationService featuredApplicationService;
 
     @Operation(summary = "创建应用")
     @PostMapping("/create")
@@ -139,5 +142,23 @@ public class AppController {
     public BaseResponse<Boolean> getLikeStatus(@PathVariable Long appId) {
         Long userId = UserContext.getLoginUserId();
         return ResultUtils.success(appService.isLiked(appId, userId));
+    }
+
+    @Operation(summary = "申请精选")
+    @PostMapping("/{appId}/apply-featured")
+    @AuthCheck
+    public BaseResponse<FeaturedApplication> applyFeatured(
+            @PathVariable Long appId,
+            @RequestParam(required = false) String reason) {
+        Long userId = UserContext.getLoginUserId();
+        return ResultUtils.success(featuredApplicationService.applyFeatured(appId, userId, reason));
+    }
+
+    @Operation(summary = "查询精选申请状态")
+    @GetMapping("/{appId}/featured-application")
+    @AuthCheck
+    public BaseResponse<FeaturedApplication> getFeaturedApplication(@PathVariable Long appId) {
+        Long userId = UserContext.getLoginUserId();
+        return ResultUtils.success(featuredApplicationService.getLatestApplication(appId, userId));
     }
 }

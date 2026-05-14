@@ -239,3 +239,44 @@ CREATE TABLE IF NOT EXISTS app_like
     UNIQUE KEY uk_app_user (app_id, user_id),
     INDEX idx_userId (user_id)
 ) COMMENT '应用点赞记录' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 13. 精选申请表
+-- =============================================
+CREATE TABLE IF NOT EXISTS featured_application
+(
+    id            BIGINT                              COMMENT 'id' PRIMARY KEY,
+    app_id        BIGINT                              NOT NULL COMMENT '应用id',
+    user_id       BIGINT                              NOT NULL COMMENT '申请人用户id',
+    status        VARCHAR(32)  DEFAULT 'pending'      NOT NULL COMMENT '状态（pending-待审核/approved-已通过/rejected-已拒绝）',
+    reason        VARCHAR(512)                        NULL COMMENT '申请理由',
+    admin_remark  VARCHAR(512)                        NULL COMMENT '管理员备注',
+    reviewer_id   BIGINT                              NULL COMMENT '审核人id',
+    review_time   DATETIME                            NULL COMMENT '审核时间',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL COMMENT '创建时间',
+    update_time   DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete     TINYINT   DEFAULT 0                  NOT NULL COMMENT '是否删除',
+    INDEX idx_appId (app_id),
+    INDEX idx_userId (user_id),
+    INDEX idx_status (status)
+) COMMENT '精选申请表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 14. 通知表
+-- =============================================
+CREATE TABLE IF NOT EXISTS notification
+(
+    id            BIGINT                              COMMENT 'id' PRIMARY KEY,
+    user_id       BIGINT                              NOT NULL COMMENT '接收通知的用户id',
+    title         VARCHAR(128)                        NOT NULL COMMENT '通知标题',
+    content       VARCHAR(512)                        NULL COMMENT '通知内容',
+    type          VARCHAR(32)                         NOT NULL COMMENT '通知类型（featured_review-精选审核结果）',
+    is_read       TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否已读（0-未读 1-已读）',
+    related_id    BIGINT                              NULL COMMENT '关联id（精选申请id等）',
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL COMMENT '创建时间',
+    update_time   DATETIME DEFAULT CURRENT_TIMESTAMP  NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete     TINYINT   DEFAULT 0                  NOT NULL COMMENT '是否删除',
+    INDEX idx_userId (user_id),
+    INDEX idx_userId_isRead (user_id, is_read),
+    INDEX idx_type (type)
+) COMMENT '通知表' COLLATE = utf8mb4_unicode_ci;

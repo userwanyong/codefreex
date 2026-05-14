@@ -123,19 +123,19 @@ public class UserInfoServiceImpl implements UserInfoService {
             createUserInfo(userId, null, nickname, avatar);
             return;
         }
-        // 仅在有新值时更新
+        // 仅在有新值时更新；空字符串不覆盖本地已有的头像/昵称
         boolean needUpdate = false;
-        if (nickname != null && !nickname.equals(existing.getNickname())) {
+        if (nickname != null && !nickname.isBlank() && !nickname.equals(existing.getNickname())) {
             needUpdate = true;
         }
-        if (avatar != null && !avatar.equals(existing.getAvatar())) {
+        if (avatar != null && !avatar.isBlank() && !avatar.equals(existing.getAvatar())) {
             needUpdate = true;
         }
         if (needUpdate) {
             UpdateChain.of(UserInfo.class)
                     .where(USER_INFO.USER_ID.eq(userId))
-                    .set(USER_INFO.NICKNAME, nickname, nickname != null)
-                    .set(USER_INFO.AVATAR, avatar, avatar != null)
+                    .set(USER_INFO.NICKNAME, nickname, nickname != null && !nickname.isBlank())
+                    .set(USER_INFO.AVATAR, avatar, avatar != null && !avatar.isBlank())
                     .update();
         }
     }

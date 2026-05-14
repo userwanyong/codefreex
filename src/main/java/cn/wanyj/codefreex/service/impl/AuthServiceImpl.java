@@ -199,6 +199,9 @@ public class AuthServiceImpl implements AuthService {
             userInfoService.syncUserInfoFromRpc(authResult.getUserId(),
                     userContext.getNickname(), userContext.getAvatar());
 
+            // 用本地数据回写 session，避免认证服务空值覆盖本地头像/昵称
+            enrichLoginUserFromLocal(authResult.getUserId(), userContext);
+
             // 检查用户状态
             checkUserStatus(authResult.getUserId());
 
@@ -310,6 +313,9 @@ public class AuthServiceImpl implements AuthService {
                 // 同步用户昵称头像到本地
                 userInfoService.syncUserInfoFromRpc(existingUser.getUserId(),
                         existingUser.getNickname(), existingUser.getAvatar());
+
+                // 用本地数据回写 session
+                enrichLoginUserFromLocal(existingUser.getUserId(), existingUser);
 
                 // 检查用户状态
                 checkUserStatus(existingUser.getUserId());
@@ -534,5 +540,29 @@ public class AuthServiceImpl implements AuthService {
         }
 
         return objectMapper.readTree(response.body());
+    }
+
+    /**
+     * 用本地 user_info 表的头像和昵称回写到 session 的 LoginUserContext，
+     * 防止认证服务返回空值导致前端显示异常。
+     */
+    private void enrichLoginUserFromLocal(Long userId, LoginUserContext userContext) {
+        cn.wanyj.codefreex.model.entity.UserInfo localUser = userInfoService.getUserInfo(userId);
+        if (localUser != null) {
+            boolean changed = false;
+            if ((userContext.getAvatar() == null || userContext.getAvatar().isBlank())
+                    && localUser.getAvatar() != null && !localUser.getAvatar().isBlank()) {
+                userContext.setAvatar(localUser.getAvatar());
+                changed = true;
+            }
+            if ((userContext.getNickname() == null || userContext.getNickname().isBlank())
+                    && localUser.getNickname() != null && !localUser.getNickname().isBlank()) {
+                userContext.setNickname(localUser.getNickname());
+                changed = true;
+            }
+            if (changed) {
+                UserContext.setLoginUser(userContext);
+            }
+        }
     }
 }

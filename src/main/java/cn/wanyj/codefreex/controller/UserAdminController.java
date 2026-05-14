@@ -17,6 +17,7 @@ import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.service.CreditTransactionService;
+import cn.wanyj.codefreex.service.NotificationService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -40,6 +41,7 @@ public class UserAdminController {
     private final UserInfoService userInfoService;
     private final AuthRpcClient authRpcClient;
     private final CreditTransactionService creditTransactionService;
+    private final NotificationService notificationService;
 
     @Operation(summary = "管理员分页查询用户")
     @GetMapping("/list")
@@ -148,6 +150,18 @@ public class UserAdminController {
                 null,
                 request.getDescription() != null ? request.getDescription() : "管理员调整码点",
                 operatorId
+        );
+
+        // 通知用户
+        String desc = request.getDescription() != null ? request.getDescription() : "管理员调整码点";
+        notificationService.createNotification(
+                request.getUserId(),
+                amount > 0 ? "码点充值通知" : "码点扣减通知",
+                (amount > 0 ? "管理员为你充值了 " : "管理员扣减了你 ") + Math.abs(amount) + " 码点"
+                        + "，当前余额：" + updatedUserInfo.getRemainingCredits()
+                        + (desc != null && !desc.equals("管理员调整码点") ? "。原因：" + desc : ""),
+                "credit_adjust",
+                null
         );
 
         return ResultUtils.success(true);

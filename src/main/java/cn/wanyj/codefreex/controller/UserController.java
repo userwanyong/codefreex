@@ -4,6 +4,7 @@ import cn.hutool.core.util.IdUtil;
 import cn.wanyj.codefreex.auth.AuthRpcClient;
 import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
+import cn.wanyj.codefreex.model.dto.LoginUserContext;
 import cn.wanyj.codefreex.common.BaseResponse;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.common.ResultUtils;
@@ -93,6 +94,14 @@ public class UserController {
         try {
             String url = ossService.upload(objectKey, file.getBytes(), contentType);
             userInfoService.updateAvatar(userId, url);
+
+            // 同步更新 session 中的头像，避免刷新后丢失
+            LoginUserContext ctx = UserContext.getLoginUser();
+            if (ctx != null) {
+                ctx.setAvatar(url);
+                UserContext.setLoginUser(ctx);
+            }
+
             return ResultUtils.success(url);
         } catch (Exception e) {
             throw new BusinessException(ResponseCode.OPERATION_ERROR, "头像上传失败：" + e.getMessage());
