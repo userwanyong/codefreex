@@ -13,7 +13,9 @@ import cn.wanyj.codefreex.model.dto.response.WorkflowStatusResponse;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.ratelimit.RateLimitException;
 import cn.wanyj.codefreex.service.AiWorkflowService;
+import cn.wanyj.codefreex.service.ConcurrentTaskLimiterService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -59,6 +61,7 @@ public class AiWorkflowController {
     private final UserInfoService userInfoService;
     private final CreditTransactionService creditTransactionService;
     private final ChatHistoryMapper chatHistoryMapper;
+    private final ConcurrentTaskLimiterService concurrentTaskLimiterService;
 
     @Operation(summary = "AI对话工作流")
     @PostMapping(value = "/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -99,6 +102,16 @@ public class AiWorkflowController {
             );
         }
 
+        // === 并发任务限制（最多 3 个同时运行的 AI 生成任务） ===
+        // 首次生成的任务槽已在 createApp 中原子性获取，无需重复计数
+        // 后续对话轮次才需要重新获取任务槽
+        if (!isFirstGenerate) {
+            long taskCount = concurrentTaskLimiterService.tryAcquire(userId, 3);
+            if (taskCount < 0) {
+                throw new RateLimitException(42900, "请求过于频繁，请稍后再试");
+            }
+        }
+
         // === 开始工作流 ===
         SseEmitter emitter = new SseEmitter(900_000L);
         AtomicBoolean emitterCompleted = new AtomicBoolean(false);
@@ -131,12 +144,14 @@ public class AiWorkflowController {
                     }
                 },
                 error -> {
+                    concurrentTaskLimiterService.release(userId);
                     if (emitterCompleted.compareAndSet(false, true)) {
                         log.error("Workflow stream error, appId={}", request.getAppId(), error);
                         try { emitter.completeWithError(error); } catch (Exception ignored) {}
                     }
                 },
                 () -> {
+                    concurrentTaskLimiterService.release(userId);
                     if (emitterCompleted.compareAndSet(false, true)) {
                         emitter.complete();
                     }

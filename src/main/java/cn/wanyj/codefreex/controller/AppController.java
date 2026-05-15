@@ -18,6 +18,7 @@ import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.entity.FeaturedApplication;
 import cn.wanyj.codefreex.service.AppService;
+import cn.wanyj.codefreex.service.ConcurrentTaskLimiterService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.FeaturedApplicationService;
 import cn.wanyj.codefreex.service.UserInfoService;
@@ -44,6 +45,7 @@ public class AppController {
     private final UserInfoService userInfoService;
     private final CreditTransactionService creditTransactionService;
     private final FeaturedApplicationService featuredApplicationService;
+    private final ConcurrentTaskLimiterService concurrentTaskLimiterService;
 
     @Operation(summary = "创建应用")
     @PostMapping("/create")
@@ -51,30 +53,43 @@ public class AppController {
     public BaseResponse<App> createApp(@Valid @RequestBody AppCreateRequest request) {
         Long userId = UserContext.getLoginUserId();
 
-        // 检查码点余额（首次生成需要 FIRST_GENERATE_COST 码点）
-        UserInfo userInfo = userInfoService.getUserInfo(userId);
-        if (userInfo == null || userInfo.getRemainingCredits() < AppConstant.FIRST_GENERATE_COST) {
+        // 并发任务前置校验（原子性获取任务槽，避免创建和生成之间的竞态条件）
+        long taskCount = concurrentTaskLimiterService.tryAcquire(userId, 3);
+        if (taskCount < 0) {
             throw new BusinessException(ResponseCode.OPERATION_ERROR,
-                    "码点不足，需要 " + AppConstant.FIRST_GENERATE_COST + " 码点才能创建应用，请先兑换码点");
+                    "请求过于频繁，请稍后再试");
         }
 
-        // 扣减码点
-        userInfoService.deductCredits(userId, AppConstant.FIRST_GENERATE_COST);
+        try {
+            // 检查码点余额（首次生成需要 FIRST_GENERATE_COST 码点）
+            UserInfo userInfo = userInfoService.getUserInfo(userId);
+            if (userInfo == null || userInfo.getRemainingCredits() < AppConstant.FIRST_GENERATE_COST) {
+                throw new BusinessException(ResponseCode.OPERATION_ERROR,
+                        "码点不足，需要 " + AppConstant.FIRST_GENERATE_COST + " 码点才能创建应用，请先兑换码点");
+            }
 
-        // 记录码点流水
-        UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
-        creditTransactionService.recordTransaction(
-                userId,
-                CreditTransactionType.CONSUME,
-                -AppConstant.FIRST_GENERATE_COST,
-                updatedUserInfo.getRemainingCredits(),
-                CreditSourceType.AI_CHAT,
-                null,
-                "创建应用（首次生成）",
-                null
-        );
+            // 扣减码点
+            userInfoService.deductCredits(userId, AppConstant.FIRST_GENERATE_COST);
 
-        return ResultUtils.success(appService.createApp(userId, request));
+            // 记录码点流水
+            UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
+            creditTransactionService.recordTransaction(
+                    userId,
+                    CreditTransactionType.CONSUME,
+                    -AppConstant.FIRST_GENERATE_COST,
+                    updatedUserInfo.getRemainingCredits(),
+                    CreditSourceType.AI_CHAT,
+                    null,
+                    "创建应用（首次生成）",
+                    null
+            );
+
+            return ResultUtils.success(appService.createApp(userId, request));
+        } catch (Exception e) {
+            // 创建失败，释放已获取的任务槽
+            concurrentTaskLimiterService.release(userId);
+            throw e;
+        }
     }
 
     @Operation(summary = "编辑应用")

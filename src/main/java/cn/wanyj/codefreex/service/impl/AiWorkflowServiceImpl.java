@@ -277,6 +277,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             } finally {
                 CURRENT_APP_ID.remove();
                 sinkAppIdMap.remove(sink);
+                // 确保 Flux sink 始终被关闭（部分成功路径遗漏了 sink.complete()）
+                if (!sink.isCancelled()) {
+                    sink.complete();
+                }
                 // 延迟清理缓存，给重连客户端足够的回放时间
                 scheduleCacheCleanup(appId);
             }
@@ -1136,9 +1140,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             }
         });
         try {
-            if (!latch.await(5, TimeUnit.MINUTES)) {
-                log.error("[{}] 流式代码生成超时(5分钟), appId={}", "Workflow", appId);
-                throw new RuntimeException("AI stream timeout after 5 minutes");
+            if (!latch.await(15, TimeUnit.MINUTES)) {
+                log.error("[{}] 流式代码生成超时(15分钟), appId={}", "Workflow", appId);
+                throw new RuntimeException("AI stream timeout after 15 minutes");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
