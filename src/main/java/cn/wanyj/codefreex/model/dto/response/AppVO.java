@@ -41,9 +41,15 @@ public class AppVO {
 
     private Integer likeCount;
 
+    private Boolean isLiked;
+
     private List<String> tags;
 
     private Long userId;
+
+    private String userName;
+
+    private String userAvatar;
 
     private LocalDateTime editTime;
 

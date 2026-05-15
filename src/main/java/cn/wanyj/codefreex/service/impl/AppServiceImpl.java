@@ -4,8 +4,11 @@ import cn.hutool.core.util.IdUtil;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
+import cn.wanyj.codefreex.mapper.AppLikeMapper;
 import cn.wanyj.codefreex.mapper.AppMapper;
 import cn.wanyj.codefreex.mapper.ChatHistoryMapper;
+import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.entity.AppLike;
 import cn.wanyj.codefreex.model.dto.request.AppCreateRequest;
 import cn.wanyj.codefreex.model.dto.request.AppEditRequest;
 import cn.wanyj.codefreex.model.dto.request.AppQueryRequest;
@@ -18,6 +21,8 @@ import cn.wanyj.codefreex.service.AppNginxService;
 import cn.wanyj.codefreex.service.AppStorageService;
 import cn.wanyj.codefreex.service.AppService;
 import cn.wanyj.codefreex.service.ChatMemoryService;
+import cn.wanyj.codefreex.service.TagService;
+import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -25,10 +30,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static cn.wanyj.codefreex.model.entity.table.AppTableDef.APP;
+import static cn.wanyj.codefreex.model.entity.table.AppLikeTableDef.APP_LIKE;
 import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HISTORY;
 
 /**
@@ -41,10 +47,13 @@ import static cn.wanyj.codefreex.model.entity.table.ChatHistoryTableDef.CHAT_HIS
 public class AppServiceImpl implements AppService {
 
     private final AppMapper appMapper;
+    private final AppLikeMapper appLikeMapper;
     private final ChatHistoryMapper chatHistoryMapper;
     private final ChatMemoryService chatMemoryService;
     private final AppStorageService appStorageService;
     private final AppNginxService appNginxService;
+    private final UserInfoService userInfoService;
+    private final TagService tagService;
 
     private static final DateTimeFormatter CURSOR_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
@@ -54,17 +63,20 @@ public class AppServiceImpl implements AppService {
         app.setAppName(request.getAppName());
         app.setDescription(request.getDescription());
         app.setInitPrompt(request.getInitPrompt());
-        app.setTags(request.getTags());
         app.setUserId(userId);
         app.setDeployKey("DK_" + IdUtil.getSnowflakeNextIdStr());
         app.setStatus(AppStatus.DRAFT.getValue());
-        app.setCodeGenType(CodeGenType.normalize(request.getCodeGenType()).getValue());
+        app.setCodeGenType(request.getCodeGenType() != null && !request.getCodeGenType().isBlank()
+                ? CodeGenType.normalize(request.getCodeGenType()).getValue() : null);
         app.setIsPublic(0);
         app.setIsFeatured(0);
         app.setPriority(0);
         app.setViewCount(0);
         app.setLikeCount(0);
         appMapper.insert(app);
+
+        // 设置标签关联
+        tagService.setAppTags(app.getId(), request.getTagIds());
         return app;
     }
 
@@ -79,10 +91,14 @@ public class AppServiceImpl implements AppService {
                 .set(APP.COVER, request.getCover(), request.getCover() != null)
                 .set(APP.INIT_PROMPT, request.getInitPrompt(), request.getInitPrompt() != null)
                 .set(APP.IS_PUBLIC, request.getIsPublic(), request.getIsPublic() != null)
-                .set(APP.TAGS, request.getTags(), request.getTags() != null)
                 .set(APP.CODE_GEN_TYPE, CodeGenType.normalize(request.getCodeGenType()).getValue(), request.getCodeGenType() != null)
                 .set(APP.EDIT_TIME, LocalDateTime.now())
                 .update();
+
+        // 更新标签关联
+        if (request.getTagIds() != null) {
+            tagService.setAppTags(app.getId(), request.getTagIds());
+        }
 
         // 编辑后将已部署应用设为私有时，自动取消部署
         if (request.getIsPublic() != null && request.getIsPublic() == 0
@@ -110,7 +126,17 @@ public class AppServiceImpl implements AppService {
                 throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "无权限查看该应用");
             }
         }
-        return toAppVO(app);
+
+        // 浏览计数（公开应用每次查看 +1）
+        if (app.getIsPublic() != null && app.getIsPublic() == 1) {
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.VIEW_COUNT, (app.getViewCount() != null ? app.getViewCount() : 0) + 1)
+                    .update();
+        }
+
+        boolean liked = userId != null && isLiked(appId, userId);
+        return toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId()), liked);
     }
 
     @Override
@@ -136,18 +162,29 @@ public class AppServiceImpl implements AppService {
                 new com.mybatisflex.core.paginate.Page<>(pageNum, pageSize), query
         );
 
-        List<AppVO> voList = page.getRecords().stream().map(this::toAppVO).toList();
+        List<AppVO> voList = page.getRecords().stream()
+                .map(app -> toAppVO(app, fillUserInfoMap(Set.of(app.getUserId())), tagService.getAppTagNames(app.getId()), null))
+                .toList();
         return PageResponse.of(voList, page.getTotalRow(), (int) page.getPageNumber(), (int) page.getPageSize());
     }
 
     @Override
-    public FeaturedAppResponse listFeaturedApps(String cursor, int size) {
+    public FeaturedAppResponse listFeaturedApps(String cursor, int size, String tag) {
         size = Math.min(size, 50);
 
         QueryWrapper query = QueryWrapper.create()
                 .where(APP.IS_FEATURED.eq(1))
                 .and(APP.IS_PUBLIC.eq(1))
                 .and(APP.STATUS.ne(AppStatus.DISABLED.getValue()));
+
+        // 标签筛选（通过关联表）
+        if (tag != null && !tag.isEmpty()) {
+            Set<Long> appIds = tagService.getAppIdsByTagName(tag);
+            if (appIds.isEmpty()) {
+                return FeaturedAppResponse.of(Collections.emptyList(), null, false);
+            }
+            query.and(APP.ID.in(appIds));
+        }
 
         // 解析游标
         if (cursor != null && !cursor.isEmpty()) {
@@ -170,7 +207,11 @@ public class AppServiceImpl implements AppService {
             apps = apps.subList(0, size);
         }
 
-        List<AppVO> voList = apps.stream().map(this::toAppVO).toList();
+        // 批量填充用户信息
+        Set<Long> userIds = apps.stream().map(App::getUserId).collect(Collectors.toSet());
+        Map<Long, UserInfo> userInfoMap = fillUserInfoMap(userIds);
+
+        List<AppVO> voList = apps.stream().map(app -> toAppVO(app, userInfoMap, tagService.getAppTagNames(app.getId()), null)).toList();
 
         String nextCursor = null;
         if (hasNext && !apps.isEmpty()) {
@@ -230,6 +271,14 @@ public class AppServiceImpl implements AppService {
                 .update();
     }
 
+    @Override
+    public void updateCodeGenType(Long appId, String codeGenType) {
+        UpdateChain.of(App.class)
+                .where(APP.ID.eq(appId))
+                .set(APP.CODE_GEN_TYPE, codeGenType)
+                .update();
+    }
+
     /**
      * 校验应用存在且属于当前用户
      */
@@ -244,10 +293,25 @@ public class AppServiceImpl implements AppService {
         return app;
     }
 
+    @Override
+    public List<String> listFeaturedTags() {
+        return tagService.listFeaturedTagNames();
+    }
+
     /**
-     * App 转 AppVO（脱敏）
+     * 批量查询用户信息
      */
-    private AppVO toAppVO(App app) {
+    private Map<Long, UserInfo> fillUserInfoMap(Set<Long> userIds) {
+        if (userIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return userInfoService.batchGetUserInfos(userIds);
+    }
+
+    /**
+     * App 转 AppVO（脱敏，含用户信息和标签）
+     */
+    private AppVO toAppVO(App app, Map<Long, UserInfo> userInfoMap, List<String> tagNames, Boolean isLiked) {
         AppVO vo = new AppVO();
         vo.setId(app.getId());
         vo.setAppName(app.getAppName());
@@ -260,14 +324,66 @@ public class AppServiceImpl implements AppService {
         vo.setPriority(app.getPriority());
         vo.setViewCount(app.getViewCount());
         vo.setLikeCount(app.getLikeCount());
-        vo.setTags(app.getTags() != null ? app.getTags() : Collections.emptyList());
+        vo.setIsLiked(isLiked);
+        vo.setTags(tagNames != null ? tagNames : Collections.emptyList());
         vo.setUserId(app.getUserId());
         vo.setInitPrompt(app.getInitPrompt());
         vo.setDeployKey(app.getDeployKey());
         vo.setDeployedTime(app.getDeployedTime());
         vo.setEditTime(app.getEditTime());
         vo.setCreateTime(app.getCreateTime());
+
+        // 填充用户信息
+        UserInfo userInfo = userInfoMap.get(app.getUserId());
+        if (userInfo != null) {
+            vo.setUserName(userInfo.getNickname());
+            vo.setUserAvatar(userInfo.getAvatar());
+        }
+
         return vo;
+    }
+
+    @Override
+    public boolean likeApp(Long appId, Long userId) {
+        App app = appMapper.selectOneById(appId);
+        if (app == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "应用不存在");
+        }
+
+        AppLike existing = appLikeMapper.selectOneByQuery(
+                QueryWrapper.create().where(APP_LIKE.APP_ID.eq(appId)).and(APP_LIKE.USER_ID.eq(userId))
+        );
+
+        if (existing != null) {
+            // 取消点赞
+            appLikeMapper.deleteById(existing.getId());
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.LIKE_COUNT, Math.max(0, (app.getLikeCount() != null ? app.getLikeCount() : 0) - 1))
+                    .update();
+            return false;
+        } else {
+            // 点赞
+            AppLike appLike = new AppLike();
+            appLike.setAppId(appId);
+            appLike.setUserId(userId);
+            appLikeMapper.insert(appLike);
+            UpdateChain.of(App.class)
+                    .where(APP.ID.eq(appId))
+                    .set(APP.LIKE_COUNT, (app.getLikeCount() != null ? app.getLikeCount() : 0) + 1)
+                    .update();
+            return true;
+        }
+    }
+
+    @Override
+    public boolean isLiked(Long appId, Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        return appLikeMapper.selectOneByQuery(
+                QueryWrapper.create().where(APP_LIKE.APP_ID.eq(appId)).and(APP_LIKE.USER_ID.eq(userId))
+        ) != null;
     }
 
     /**

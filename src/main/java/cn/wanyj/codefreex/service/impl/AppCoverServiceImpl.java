@@ -4,6 +4,7 @@ import cn.wanyj.codefreex.common.AppConstant;
 import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.service.AppCoverService;
 import cn.wanyj.codefreex.service.AppStorageService;
+import cn.wanyj.codefreex.service.OssService;
 import cn.wanyj.codefreex.service.ScreenshotExecutor;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class AppCoverServiceImpl implements AppCoverService {
 
     private final AppStorageService appStorageService;
     private final ScreenshotExecutor screenshotExecutor;
+    private final OssService ossService;
     private final AppRuntimeConfig.ScreenshotProperties screenshotProperties;
     private final AppRuntimeConfig.DeployAccessProperties deployAccessProperties;
 
@@ -36,15 +38,18 @@ public class AppCoverServiceImpl implements AppCoverService {
     @Async
     public void generateCoverAsync(Long appId, String deployKey, String appName, String description) {
         try {
-            String coverUrl;
+            Path coverPath;
             if (screenshotProperties.isEnabled()) {
-                Path coverPath = Path.of(AppConstant.CODE_DEPLOY_ROOT_DIR, deployKey, COVER_FILE_NAME);
+                coverPath = Path.of(AppConstant.CODE_DEPLOY_ROOT_DIR, deployKey, COVER_FILE_NAME);
                 String deployUrl = deployAccessProperties.buildDeployUrl(deployKey);
                 screenshotExecutor.capture(deployUrl, coverPath, screenshotProperties.getWidth(), screenshotProperties.getHeight());
-                coverUrl = "/api/deploy/" + deployKey + "/" + COVER_FILE_NAME;
             } else {
-                coverUrl = appStorageService.generateCover(deployKey, appName, description);
+                appStorageService.generateCover(deployKey, appName, description);
+                coverPath = Path.of(AppConstant.CODE_DEPLOY_ROOT_DIR, deployKey, COVER_FILE_NAME);
             }
+            String objectKey = "cover/" + deployKey + "/" + COVER_FILE_NAME;
+            String coverUrl = ossService.upload(objectKey, coverPath);
+
             UpdateChain.of(cn.wanyj.codefreex.model.entity.App.class)
                     .where(APP.ID.eq(appId))
                     .set(APP.COVER, coverUrl)

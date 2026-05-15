@@ -1,26 +1,19 @@
 package cn.wanyj.codefreex.controller;
 
-import cn.wanyj.codefreex.auth.annotation.AuthCheck;
-import cn.wanyj.codefreex.model.dto.request.VisualEditRequest;
 import cn.wanyj.codefreex.service.AiWorkflowService;
-import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.MediaType;
-import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Flux;
 
 /**
- * Visual edit controller
+ * 可视化编辑（已整合进工作流，通过意图识别自动路由）
  *
  * @author BanXia
  */
-@Tag(name = "Visual Edit")
+@Slf4j
+@Tag(name = "可视化编辑")
 @RestController
 @RequestMapping("/app/edit")
 @RequiredArgsConstructor
@@ -28,10 +21,4 @@ public class AppEditController {
 
     private final AiWorkflowService aiWorkflowService;
 
-    @Operation(summary = "Update code by visual edit instruction")
-    @PostMapping(value = "/visual", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @AuthCheck
-    public Flux<ServerSentEvent<String>> visualEdit(@Valid @RequestBody VisualEditRequest request) {
-        return aiWorkflowService.visualEdit(request);
-    }
 }

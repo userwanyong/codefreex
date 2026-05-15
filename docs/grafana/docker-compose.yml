@@ -1,0 +1,52 @@
+# CodeFreeX 监控栈 Docker Compose 部署配置
+# 使用方式: docker compose up -d
+# 访问:
+#   - Prometheus UI: http://localhost:9090
+#   - Grafana UI:    http://localhost:3000 (默认账号 admin/admin)
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    container_name: codefreex-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: codefreex-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/codefreex-ai-monitoring.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./codefreex-ai-monitoring.json:/var/lib/grafana/dashboards/codefreex-ai-monitoring.json:ro
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  monitoring:
+    driver: bridge

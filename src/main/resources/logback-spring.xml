@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!--
+        TurboFilter 在日志事件创建的最早期阶段进行过滤，
+        比普通 Filter 或 logger level 更高效。
+        BrokenPipeTurboFilter 只抑制 Tomcat ContainerBase logger
+        的 IOException ERROR 日志（SSE 客户端断连产生的 broken pipe），
+        其他所有日志不受影响。
+    -->
+    <turboFilter class="cn.wanyj.codefreex.config.BrokenPipeTurboFilter"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

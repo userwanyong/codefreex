@@ -158,7 +158,7 @@ public class AuthServiceImpl implements AuthService {
             }
 
             // 5. 创建本地用户信息
-            userInfoService.createUserInfo(registeredUser.getId(), inviterId);
+            userInfoService.createUserInfo(registeredUser.getId(), inviterId, nickname, null);
 
             // 6. 构建登录上下文
             LoginUserContext userContext = new LoginUserContext();
@@ -194,6 +194,16 @@ public class AuthServiceImpl implements AuthService {
                 throw new BusinessException(ResponseCode.SYSTEM_ERROR, "获取用户信息失败");
             }
             UserContext.setLoginUser(userContext);
+
+            // 同步用户昵称头像到本地
+            userInfoService.syncUserInfoFromRpc(authResult.getUserId(),
+                    userContext.getNickname(), userContext.getAvatar());
+
+            // 用本地数据回写 session，避免认证服务空值覆盖本地头像/昵称
+            enrichLoginUserFromLocal(authResult.getUserId(), userContext);
+
+            // 检查用户状态
+            checkUserStatus(authResult.getUserId());
 
             String accessToken = authRpcClient.generateToken(authResult.getUserId(), 1800);
             TokenResponse response = new TokenResponse();
@@ -299,6 +309,17 @@ public class AuthServiceImpl implements AuthService {
             if (existingUser != null) {
                 // 老用户：直接登录
                 UserContext.setLoginUser(existingUser);
+
+                // 同步用户昵称头像到本地
+                userInfoService.syncUserInfoFromRpc(existingUser.getUserId(),
+                        existingUser.getNickname(), existingUser.getAvatar());
+
+                // 用本地数据回写 session
+                enrichLoginUserFromLocal(existingUser.getUserId(), existingUser);
+
+                // 检查用户状态
+                checkUserStatus(existingUser.getUserId());
+
                 String token = authRpcClient.generateToken(existingUser.getUserId(), 1800);
 
                 TokenResponse tokenResp = new TokenResponse();
@@ -392,7 +413,7 @@ public class AuthServiceImpl implements AuthService {
             }
 
             // 4. 创建本地用户信息
-            userInfoService.createUserInfo(registeredUser.getId(), inviterId);
+            userInfoService.createUserInfo(registeredUser.getId(), inviterId, nickname, avatar.isEmpty() ? null : avatar);
             stringRedisTemplate.delete(tempKey);
 
             LoginUserContext userContext = new LoginUserContext();
@@ -428,6 +449,16 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginUserContext getLoginUser() {
         return UserContext.getLoginUser();
+    }
+
+    /**
+     * 检查用户状态，被禁用的用户不允许登录
+     */
+    private void checkUserStatus(Long userId) {
+        cn.wanyj.codefreex.model.entity.UserInfo localUser = userInfoService.getUserInfo(userId);
+        if (localUser != null && "disabled".equals(localUser.getStatus())) {
+            throw new BusinessException(ResponseCode.NO_AUTH_ERROR, "账号已被禁用，请联系管理员");
+        }
     }
 
     // ==================== 私有工具方法 ====================
@@ -509,5 +540,29 @@ public class AuthServiceImpl implements AuthService {
         }
 
         return objectMapper.readTree(response.body());
+    }
+
+    /**
+     * 用本地 user_info 表的头像和昵称回写到 session 的 LoginUserContext，
+     * 防止认证服务返回空值导致前端显示异常。
+     */
+    private void enrichLoginUserFromLocal(Long userId, LoginUserContext userContext) {
+        cn.wanyj.codefreex.model.entity.UserInfo localUser = userInfoService.getUserInfo(userId);
+        if (localUser != null) {
+            boolean changed = false;
+            if ((userContext.getAvatar() == null || userContext.getAvatar().isBlank())
+                    && localUser.getAvatar() != null && !localUser.getAvatar().isBlank()) {
+                userContext.setAvatar(localUser.getAvatar());
+                changed = true;
+            }
+            if ((userContext.getNickname() == null || userContext.getNickname().isBlank())
+                    && localUser.getNickname() != null && !localUser.getNickname().isBlank()) {
+                userContext.setNickname(localUser.getNickname());
+                changed = true;
+            }
+            if (changed) {
+                UserContext.setLoginUser(userContext);
+            }
+        }
     }
 }

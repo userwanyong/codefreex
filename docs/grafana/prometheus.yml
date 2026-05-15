@@ -1,0 +1,20 @@
+# CodeFreeX Prometheus 抓取配置
+# 将此文件放置于 Prometheus 配置目录下（通常为 /etc/prometheus/prometheus.yml）
+
+global:
+  scrape_interval: 15s       # 默认抓取间隔
+  evaluation_interval: 15s   # 规则评估间隔
+  scrape_timeout: 10s        # 抓取超时
+
+scrape_configs:
+  # CodeFreeX 应用指标
+  - job_name: 'codefreex'
+    metrics_path: '/api/actuator/prometheus'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['host.docker.internal:8123']
+        labels:
+          env: 'production'
+    # 如果部署在服务器上，将 host.docker.internal 替换为实际 IP 或域名
+    # static_configs:
+    #   - targets: ['192.168.x.x:8123']

@@ -17,7 +17,15 @@ public class ProcessCommandExecutor implements CommandExecutor {
     @Override
     public void execute(List<String> command, Path workingDirectory) {
         try {
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            List<String> effectiveCommand = command;
+            if (isWindows()) {
+                List<String> windowsCommand = new java.util.ArrayList<>();
+                windowsCommand.add("cmd");
+                windowsCommand.add("/c");
+                windowsCommand.addAll(command);
+                effectiveCommand = windowsCommand;
+            }
+            ProcessBuilder processBuilder = new ProcessBuilder(effectiveCommand);
             if (workingDirectory != null) {
                 processBuilder.directory(workingDirectory.toFile());
             }
@@ -33,5 +41,9 @@ public class ProcessCommandExecutor implements CommandExecutor {
         } catch (Exception e) {
             throw new RuntimeException("命令执行失败: " + String.join(" ", command), e);
         }
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("win");
     }
 }

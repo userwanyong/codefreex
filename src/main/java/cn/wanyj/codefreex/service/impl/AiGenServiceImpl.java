@@ -13,6 +13,7 @@ import cn.wanyj.codefreex.service.AiGenService;
 import cn.wanyj.codefreex.service.AppService;
 import cn.wanyj.codefreex.service.ChatHistoryService;
 import cn.wanyj.codefreex.service.ChatMemoryService;
+import cn.wanyj.codefreex.service.UserUsageService;
 import cn.wanyj.codefreex.service.strategy.CodePersistStrategy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.AiMessage;
@@ -22,6 +23,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.ChatResponseMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -52,6 +54,7 @@ public class AiGenServiceImpl implements AiGenService {
     private final AppService appService;
     private final ChatHistoryService chatHistoryService;
     private final ChatMemoryService chatMemoryService;
+    private final UserUsageService userUsageService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -69,6 +72,7 @@ public class AiGenServiceImpl implements AiGenService {
         updateAppStatus(appId, AppStatus.GENERATING.getValue());
 
         String deployKey = app.getDeployKey();
+        long startTime = System.currentTimeMillis();
 
         // 3. 获取系统提示词
         String systemPrompt = promptLoader.load("html_single.txt");
@@ -89,6 +93,9 @@ public class AiGenServiceImpl implements AiGenService {
 
                 @Override
                 public void onPartialResponse(String partialToken) {
+                    if (sink.isCancelled()) {
+                        return;
+                    }
                     fullResponse.append(partialToken);
                     try {
                         String json = objectMapper.writeValueAsString(
@@ -124,6 +131,25 @@ public class AiGenServiceImpl implements AiGenService {
                                 log.error("回滚用户消息失败: appId={}", appId, rollbackError);
                             }
                             updateAppStatus(appId, previousStatus);
+
+                            // 即使回复为空，也记录已消耗的 token
+                            try {
+                                int emptyLatency = (int) (System.currentTimeMillis() - startTime);
+                                int eInput = 0, eOutput = 0, eTotal = 0;
+                                String eModelId = null;
+                                if (response != null && response.metadata() != null) {
+                                    if (response.metadata().tokenUsage() != null) {
+                                        eInput = response.metadata().tokenUsage().inputTokenCount() != null ? response.metadata().tokenUsage().inputTokenCount() : 0;
+                                        eOutput = response.metadata().tokenUsage().outputTokenCount() != null ? response.metadata().tokenUsage().outputTokenCount() : 0;
+                                        eTotal = response.metadata().tokenUsage().totalTokenCount() != null ? response.metadata().tokenUsage().totalTokenCount() : 0;
+                                    }
+                                    eModelId = response.metadata().modelName();
+                                }
+                                userUsageService.recordUsage(userId, appId, eModelId, eInput, eOutput, eTotal, emptyLatency, "fail", "AI 回复为空");
+                            } catch (Exception usageErr) {
+                                log.warn("记录空回复用量统计失败: appId={}", appId, usageErr);
+                            }
+
                             sink.next(ServerSentEvent.<String>builder()
                                     .data(objectMapper.writeValueAsString(new SseMessage("error", "AI 暂时无法回复，请稍后重试")))
                                     .build());
@@ -146,11 +172,43 @@ public class AiGenServiceImpl implements AiGenService {
                         chatHistoryService.saveAiMessage(appId, userId, fullText, userHistory.getId());
                         chatMemory.add(AiMessage.from(fullText));
 
+                        // 记录用量统计（成功）
+                        int latency = (int) (System.currentTimeMillis() - startTime);
+                        int inputTokens = 0, outputTokens = 0, totalTokens = 0;
+                        String modelId = null;
+                        if (response != null) {
+                            try {
+                                ChatResponseMetadata metadata = response.metadata();
+                                if (metadata != null) {
+                                    if (metadata.tokenUsage() != null) {
+                                        inputTokens = metadata.tokenUsage().inputTokenCount() != null ? metadata.tokenUsage().inputTokenCount() : 0;
+                                        outputTokens = metadata.tokenUsage().outputTokenCount() != null ? metadata.tokenUsage().outputTokenCount() : 0;
+                                        totalTokens = metadata.tokenUsage().totalTokenCount() != null ? metadata.tokenUsage().totalTokenCount() : 0;
+                                    }
+                                    modelId = metadata.modelName();
+                                }
+                            } catch (Exception e) {
+                                log.warn("获取 token 用量失败: appId={}", appId, e);
+                            }
+                        }
+                        try {
+                            userUsageService.recordUsage(userId, appId, modelId, inputTokens, outputTokens, totalTokens, latency, "success", null);
+                        } catch (Exception e) {
+                            log.warn("记录用量统计失败: appId={}", appId, e);
+                        }
+
                         String doneJson = objectMapper.writeValueAsString(new SseMessage("done", ""));
                         sink.next(ServerSentEvent.<String>builder().data(doneJson).build());
                     } catch (Exception e) {
                         log.error("保存生成代码失败: appId={}", appId, e);
                         updateAppStatus(appId, previousStatus);
+                        // 保存失败时仍然记录已消耗的 token
+                        try {
+                            int failLatency = (int) (System.currentTimeMillis() - startTime);
+                            userUsageService.recordUsage(userId, appId, null, 0, 0, 0, failLatency, "fail", "代码保存失败: " + e.getMessage());
+                        } catch (Exception usageErr) {
+                            log.warn("记录保存失败用量统计失败: appId={}", appId, usageErr);
+                        }
                         // 不再将错误信息写入对话历史，避免污染上下文导致后续对话损坏
                         try {
                             chatHistoryService.deleteById(userHistory.getId());
@@ -173,6 +231,15 @@ public class AiGenServiceImpl implements AiGenService {
                 public void onError(Throwable error) {
                     log.error("AI 流式生成失败: appId={}", appId, error);
                     updateAppStatus(appId, previousStatus);
+
+                    // 记录用量统计（失败）
+                    int latency = (int) (System.currentTimeMillis() - startTime);
+                    try {
+                        userUsageService.recordUsage(userId, appId, null, 0, 0, 0, latency, "fail", error.getMessage());
+                    } catch (Exception e) {
+                        log.warn("记录用量统计（失败）失败: appId={}", appId, e);
+                    }
+
                     // 不再将错误信息写入对话历史，回滚用户消息
                     try {
                         chatHistoryService.deleteById(userHistory.getId());

@@ -51,6 +51,30 @@ ai:
     temperature: 0.3
     max-tokens: 2048
   prompts-dir: classpath:prompts/
+# Actuator + Prometheus 监控
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        ai_model_call_duration: true
+      slo:
+        ai_model_call_duration: 1s,3s,5s,10s,30s,60s,120s,180s,300s
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 app:
   nginx:
     enabled: false

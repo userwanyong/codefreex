@@ -23,9 +23,17 @@ public class UserInfo {
 
     private Long inviterId;
 
+    private String nickname;
+
+    private String avatar;
+
+    /** 累计获得码点 */
     private Integer totalCredits;
 
+    /** 剩余码点 */
     private Integer remainingCredits;
+
+    private String status;
 
     @Column(onInsertValue = "now()")
     private LocalDateTime createTime;

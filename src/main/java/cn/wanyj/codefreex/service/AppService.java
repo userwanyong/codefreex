@@ -8,6 +8,8 @@ import cn.wanyj.codefreex.model.dto.response.AppVO;
 import cn.wanyj.codefreex.model.dto.response.FeaturedAppResponse;
 import cn.wanyj.codefreex.model.entity.App;
 
+import java.util.List;
+
 /**
  * 应用服务接口
  *
@@ -64,9 +66,15 @@ public interface AppService {
      *
      * @param cursor 游标（null 表示首页）
      * @param size   每页大小
+     * @param tag    标签筛选（可选）
      * @return 精选应用响应
      */
-    FeaturedAppResponse listFeaturedApps(String cursor, int size);
+    FeaturedAppResponse listFeaturedApps(String cursor, int size, String tag);
+
+    /**
+     * 获取精选应用的所有标签（去重）
+     */
+    List<String> listFeaturedTags();
 
     /**
      * 设置/取消精选（A-13，管理员）
@@ -91,4 +99,29 @@ public interface AppService {
      * @param status 新状态
      */
     void updateAppStatus(Long appId, String status);
+
+    /**
+     * 更新应用代码生成类型
+     *
+     * @param appId       应用ID
+     * @param codeGenType 代码生成类型
+     */
+    void updateCodeGenType(Long appId, String codeGenType);
+
+    /**
+     * 切换点赞（已赞则取消，未赞则点赞）
+     *
+     * @param appId  应用ID
+     * @param userId 用户ID
+     * @return true-点赞，false-取消点赞
+     */
+    boolean likeApp(Long appId, Long userId);
+
+    /**
+     * 查询用户是否已点赞
+     *
+     * @param appId  应用ID
+     * @param userId 用户ID
+     */
+    boolean isLiked(Long appId, Long userId);
 }

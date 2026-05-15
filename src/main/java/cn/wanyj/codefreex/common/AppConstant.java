@@ -30,4 +30,14 @@ public interface AppConstant {
     String CODE_DOWNLOAD_ROOT_DIR = System.getProperty("user.dir") + "/tmp/code_download";
 
     String CODE_NGINX_ROOT_DIR = System.getProperty("user.dir") + "/tmp/nginx";
+
+    /**
+     * 首次生成应用消耗码点数
+     */
+    int FIRST_GENERATE_COST = 50;
+
+    /**
+     * 每轮对话消耗码点数
+     */
+    int CHAT_ROUND_COST = 10;
 }

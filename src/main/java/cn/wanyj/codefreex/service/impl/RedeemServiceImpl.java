@@ -8,7 +8,11 @@ import cn.wanyj.codefreex.mapper.RedeemMapper;
 import cn.wanyj.codefreex.mapper.RedeemUserMapper;
 import cn.wanyj.codefreex.model.entity.Redeem;
 import cn.wanyj.codefreex.model.entity.RedeemUser;
+import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.enums.CreditSourceType;
+import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.enums.InviteStatus;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.RedeemService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -21,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static cn.wanyj.codefreex.model.entity.table.RedeemTableDef.REDEEM;
+import static cn.wanyj.codefreex.model.entity.table.RedeemUserTableDef.REDEEM_USER;
 /**
  * @author wanyj
  */
@@ -31,6 +36,7 @@ public class RedeemServiceImpl implements RedeemService {
     private final RedeemMapper redeemMapper;
     private final RedeemUserMapper redeemUserMapper;
     private final UserInfoService userInfoService;
+    private final CreditTransactionService creditTransactionService;
 
     @Override
     public Redeem generateRedeemCode(Long adminId, int quota, String batch, Integer expireHours, Integer maxUseCount) {
@@ -81,7 +87,15 @@ public class RedeemServiceImpl implements RedeemService {
             throw new BusinessException(ResponseCode.PARAMS_ERROR, "兑换码已用完");
         }
 
-        // 5. 更新使用次数和状态
+        // 5. 校验用户是否已使用过
+        long existCount = redeemUserMapper.selectCountByQuery(
+                QueryWrapper.create().where(REDEEM_USER.REDEEM_ID.eq(redeem.getId())).and(REDEEM_USER.USER_ID.eq(userId))
+        );
+        if (existCount > 0) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "您已使用过该兑换码");
+        }
+
+        // 6. 更新使用次数和状态
         int newUsedCount = redeem.getUsedCount() + 1;
         String newStatus = newUsedCount >= redeem.getMaxUseCount()
                 ? InviteStatus.USED.getValue()
@@ -93,10 +107,23 @@ public class RedeemServiceImpl implements RedeemService {
                 .set(REDEEM.STATUS, newStatus)
                 .update();
 
-        // 6. 增加用户额度
+        // 7. 增加用户码点
         userInfoService.addCredits(userId, redeem.getQuota());
 
-        // 7. 创建兑换-用户关联记录
+        // 8. 记录码点流水
+        UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
+        creditTransactionService.recordTransaction(
+                userId,
+                CreditTransactionType.RECHARGE,
+                redeem.getQuota(),
+                updatedUserInfo.getRemainingCredits(),
+                CreditSourceType.REDEEM,
+                redeem.getId(),
+                "兑换码充值: " + redeemCode,
+                null
+        );
+
+        // 9. 创建兑换-用户关联记录
         RedeemUser redeemUser = new RedeemUser();
         redeemUser.setRedeemId(redeem.getId());
         redeemUser.setCreatorId(redeem.getUserId());

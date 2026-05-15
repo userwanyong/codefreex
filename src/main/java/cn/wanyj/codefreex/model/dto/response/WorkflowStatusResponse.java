@@ -19,4 +19,7 @@ public class WorkflowStatusResponse {
     private Integer retryCount;
     private String message;
     private LocalDateTime updateTime;
+
+    /** 缓存的事件总数（用于前端判断是否有可回放的事件） */
+    private Integer cachedEventCount;
 }
