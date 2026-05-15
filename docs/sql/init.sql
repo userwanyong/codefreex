@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS redeem_user
     is_delete   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
     INDEX idx_redeemId (redeem_id),
     INDEX idx_creatorId (creator_id),
-    INDEX idx_userId (user_id)
+    INDEX idx_userId (user_id),
+    UNIQUE KEY uk_redeem_user (redeem_id, user_id)
 ) COMMENT '兑换-用户关联表' COLLATE = utf8mb4_unicode_ci;
 
 -- =============================================

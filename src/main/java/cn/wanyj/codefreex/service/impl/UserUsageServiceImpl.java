@@ -3,6 +3,7 @@ package cn.wanyj.codefreex.service.impl;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.mapper.UserUsageMapper;
 import cn.wanyj.codefreex.model.entity.UserUsage;
+import cn.wanyj.codefreex.service.PrometheusMetricsService;
 import cn.wanyj.codefreex.service.UserUsageService;
 import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import static cn.wanyj.codefreex.model.entity.table.UserUsageTableDef.USER_USAGE
 public class UserUsageServiceImpl implements UserUsageService {
 
     private final UserUsageMapper userUsageMapper;
+    private final PrometheusMetricsService prometheusMetricsService;
 
     @Override
     public UserUsage recordUsage(Long userId, Long appId, String modelId,
@@ -34,6 +36,14 @@ public class UserUsageServiceImpl implements UserUsageService {
         usage.setStatus(status);
         usage.setErrorInfo(errorInfo);
         userUsageMapper.insert(usage);
+
+        // 记录 Prometheus 指标（来源标记为 auto，统一采集点）
+        prometheusMetricsService.recordModelCall(
+                userId, appId, modelId,
+                inputTokens, outputTokens, totalTokens,
+                latency, status, errorInfo, "auto"
+        );
+
         return usage;
     }
 
