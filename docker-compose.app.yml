@@ -1,0 +1,62 @@
+# CodeFreex 主应用服务独立部署配置
+# 使用方式: docker compose -f docker-compose.app.yml up -d
+# 前提: 基础设施（MySQL、Redis、Nacos）已通过 docker-compose.yml 启动
+#
+# 环境变量配置（推荐通过 .env 文件）:
+#   AI_API_KEY          - AI 模型 API 密钥
+#   AI_API_BASE_URL     - AI 模型 API 地址
+#   AI_MODEL_NAME       - AI 模型名称
+#   OSS_ENDPOINT        - 对象存储 Endpoint
+#   OSS_ACCESS_KEY_ID   - 对象存储 AccessKey ID
+#   OSS_ACCESS_KEY_SECRET - 对象存储 AccessKey Secret
+#   OSS_BUCKET_NAME     - 对象存储 Bucket 名称
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: codefreex-app:latest
+    container_name: codefreex-app
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: docker
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-mysql}:${MYSQL_PORT:-3306}/codefreex?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME:-root}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-123456}
+      # Redis
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT:-6379}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-123456}
+      # Nacos
+      dubbo.registry.address: nacos://${NACOS_HOST:-nacos}:${NACOS_PORT:-8848}
+      dubbo.registry.username: ${NACOS_USERNAME:-nacos}
+      dubbo.registry.password: ${NACOS_PASSWORD:-nacos}
+      dubbo.metadata-report.address: nacos://${NACOS_HOST:-nacos}:${NACOS_PORT:-8848}
+      dubbo.metadata-report.username: ${NACOS_USERNAME:-nacos}
+      dubbo.metadata-report.password: ${NACOS_PASSWORD:-nacos}
+      # AI
+      langchain4j.open-ai.streaming-chat-model.api-key: ${AI_API_KEY:-your-api-key}
+      langchain4j.open-ai.streaming-chat-model.base-url: ${AI_API_BASE_URL:-https://api.edgefn.net/v1}
+      langchain4j.open-ai.streaming-chat-model.model-name: ${AI_MODEL_NAME:-MiniMax-M2.5}
+      # OSS
+      app.oss.endpoint: ${OSS_ENDPOINT:-}
+      app.oss.access-key-id: ${OSS_ACCESS_KEY_ID:-}
+      app.oss.access-key-secret: ${OSS_ACCESS_KEY_SECRET:-}
+      app.oss.bucket-name: ${OSS_BUCKET_NAME:-}
+    ports:
+      - "${APP_PORT:-8124}:8123"
+    volumes:
+      - app-logs:/app/logs
+    networks:
+      - codefreex-network
+
+volumes:
+  app-logs:
+    driver: local
+
+networks:
+  codefreex-network:
+    external: true

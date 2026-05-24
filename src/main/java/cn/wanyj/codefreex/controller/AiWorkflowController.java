@@ -87,14 +87,13 @@ public class AiWorkflowController {
                 throw new BusinessException(ResponseCode.OPERATION_ERROR,
                         "码点不足，需要 " + cost + " 码点，请先兑换码点");
             }
-            userInfoService.deductCredits(userId, cost);
+            int balanceAfter = userInfoService.deductCredits(userId, cost);
 
-            UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
             creditTransactionService.recordTransaction(
                     userId,
                     CreditTransactionType.CONSUME,
                     -cost,
-                    updatedUserInfo.getRemainingCredits(),
+                    balanceAfter,
                     CreditSourceType.AI_CHAT,
                     request.getAppId(),
                     "对话轮次",

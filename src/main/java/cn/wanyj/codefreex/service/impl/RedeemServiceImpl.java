@@ -8,7 +8,6 @@ import cn.wanyj.codefreex.mapper.RedeemMapper;
 import cn.wanyj.codefreex.mapper.RedeemUserMapper;
 import cn.wanyj.codefreex.model.entity.Redeem;
 import cn.wanyj.codefreex.model.entity.RedeemUser;
-import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.enums.InviteStatus;
@@ -108,15 +107,14 @@ public class RedeemServiceImpl implements RedeemService {
                 .update();
 
         // 7. 增加用户码点
-        userInfoService.addCredits(userId, redeem.getQuota());
+        int balanceAfter = userInfoService.addCredits(userId, redeem.getQuota());
 
         // 8. 记录码点流水
-        UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
         creditTransactionService.recordTransaction(
                 userId,
                 CreditTransactionType.RECHARGE,
                 redeem.getQuota(),
-                updatedUserInfo.getRemainingCredits(),
+                balanceAfter,
                 CreditSourceType.REDEEM,
                 redeem.getId(),
                 "兑换码充值: " + redeemCode,

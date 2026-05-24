@@ -69,15 +69,14 @@ public class AppController {
             }
 
             // 扣减码点
-            userInfoService.deductCredits(userId, AppConstant.FIRST_GENERATE_COST);
+            int balanceAfter = userInfoService.deductCredits(userId, AppConstant.FIRST_GENERATE_COST);
 
             // 记录码点流水
-            UserInfo updatedUserInfo = userInfoService.getUserInfo(userId);
             creditTransactionService.recordTransaction(
                     userId,
                     CreditTransactionType.CONSUME,
                     -AppConstant.FIRST_GENERATE_COST,
-                    updatedUserInfo.getRemainingCredits(),
+                    balanceAfter,
                     CreditSourceType.AI_CHAT,
                     null,
                     "创建应用（首次生成）",

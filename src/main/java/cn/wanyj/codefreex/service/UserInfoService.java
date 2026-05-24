@@ -35,13 +35,17 @@ public interface UserInfoService {
 
     /**
      * 增加用户码点
+     *
+     * @return 增加后的剩余码点
      */
-    boolean addCredits(Long userId, int amount);
+    int addCredits(Long userId, int amount);
 
     /**
      * 扣减用户码点（余额不足抛异常）
+     *
+     * @return 扣减后的剩余码点
      */
-    boolean deductCredits(Long userId, int amount);
+    int deductCredits(Long userId, int amount);
 
     /**
      * 从RPC同步用户昵称头像到本地
