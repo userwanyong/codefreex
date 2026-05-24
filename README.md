@@ -202,6 +202,13 @@ docs/
 - **Redis** 6.x+
 - AI 模型 API Key（OpenAI 兼容接口）
 
+### 未开源依赖说明
+
+后端 `pom.xml` 中存在部分暂未开源的内部依赖。若 Maven 构建时提示相关依赖无法解析，请先下载依赖包并安装到本地 Maven 仓库后再启动项目。
+
+- 下载地址：[百度网盘](https://pan.baidu.com/s/1y96HMm1ozQIYinZjjR9wcg)
+- 提取码：`t396`
+
 ### 配置
 
 1. 创建 MySQL 数据库，执行初始化脚本：
