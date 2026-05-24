@@ -181,6 +181,10 @@ src/main/resources/
 ├── application-local.yml       # 本地开发配置
 └── logback-spring.xml          # 日志配置
 
+local-libs/                     # 未开源依赖（Docker 构建自动引用）
+├── auth-service-api/
+└── auth-service-parent/
+
 docs/
 ├── sql/
 │   └── init.sql                # 数据库初始化脚本（14 张表）
@@ -204,10 +208,18 @@ docs/
 
 ### 未开源依赖说明
 
-后端 `pom.xml` 中存在部分暂未开源的内部依赖。若 Maven 构建时提示相关依赖无法解析，请先下载依赖包并安装到本地 Maven 仓库后再启动项目。
+后端 `pom.xml` 中存在部分暂未开源的内部依赖（`auth-service-api` 等）。项目已将依赖包放置在 `local-libs/` 目录中，Maven 构建和 Docker 构建时会自动引用。
 
-- 下载地址：[百度网盘](https://pan.baidu.com/s/1y96HMm1ozQIYinZjjR9wcg)
-- 提取码：`t396`
+若 Maven 本地构建时提示相关依赖无法解析，请手动安装：
+
+```bash
+mvn install:install-file \
+  -Dfile=local-libs/auth-service-api/0.0.1-SNAPSHOT/auth-service-api-0.0.1-SNAPSHOT.jar \
+  -DgroupId=cn.wanyj.auth \
+  -DartifactId=auth-service-api \
+  -Dversion=0.0.1-SNAPSHOT \
+  -Dpackaging=jar
+```
 
 ### 配置
 
