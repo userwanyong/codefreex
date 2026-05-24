@@ -38,3 +38,4 @@ application-local.yml
 /docs/md
 /.claude/
 /tmp/
+/.local-config

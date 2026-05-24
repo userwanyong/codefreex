@@ -1,0 +1,67 @@
+# CodeFreex 主应用服务独立部署配置
+# 使用方式: docker compose -f docker-compose-app.yml up -d
+# 前提: 基础设施（MySQL、Redis、Nacos）已通过 docker-compose.yml 启动
+# 需要在服务器执行以下两条命令！
+#  mkdir -p ./data/tmp ./data/logs
+#  chmod -R 777 ./data
+
+services:
+  codefreex-app:
+    image: wanyj/codefreex:1.0
+    container_name: codefreex-app
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: docker
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/codefreex?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      # Redis
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Nacos
+      dubbo.registry.address: nacos://${NACOS_HOST}:${NACOS_PORT}
+      dubbo.registry.username: ${NACOS_USERNAME}
+      dubbo.registry.password: ${NACOS_PASSWORD}
+      dubbo.metadata-report.address: nacos://${NACOS_HOST}:${NACOS_PORT}
+      dubbo.metadata-report.username: ${NACOS_USERNAME}
+      dubbo.metadata-report.password: ${NACOS_PASSWORD}
+      # AI
+      langchain4j.open-ai.streaming-chat-model.api-key: ${AI_API_KEY}
+      langchain4j.open-ai.streaming-chat-model.base-url: ${AI_API_BASE_URL}
+      langchain4j.open-ai.streaming-chat-model.model-name: ${AI_MODEL_NAME}
+      ai.review.api-key: ${AI_API_KEY}
+      ai.review.base-url: ${AI_API_BASE_URL}
+      ai.review.model-name: ${AI_MODEL_NAME}
+      # Authing
+      authing.app-id: ${AUTHING_APP_ID}
+      authing.app-secret: ${AUTHING_APP_SECRET}
+      authing.app-host: ${AUTHING_APP_HOST}
+      # Auth Service
+      auth-service.tenant-id: ${AUTH_TENANT_ID}
+      # Screenshot（使用容器内 Chromium）
+      app.screenshot.enabled: true
+      app.screenshot.browser: chrome
+      app.screenshot.browser-binary-path: /usr/bin/chromium-browser
+      app.screenshot.driver-path: /usr/bin/chromedriver
+      # OSS
+      app.oss.endpoint: ${OSS_ENDPOINT}
+      app.oss.bucket: ${OSS_BUCKET}
+      app.oss.access-key-id: ${OSS_ACCESS_KEY_ID}
+      app.oss.access-key-secret: ${OSS_ACCESS_KEY_SECRET}
+      # Workflow
+      app.workflow.image-fetch-enabled: true
+      app.workflow.pexels-api-key: ${PEXELS_API_KEY}
+      app.workflow.pixabay-api-key: ${PIXABAY_API_KEY}
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./data/logs:/app/logs
+      - ./data/tmp:/app/tmp
+    networks:
+      - codefreex-network
+
+networks:
+  codefreex-network:
