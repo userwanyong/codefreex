@@ -132,20 +132,26 @@ public class UserAdminController {
     public BaseResponse<Boolean> adjustCredits(@Valid @RequestBody CreditAdjustRequest request) {
         Long operatorId = UserContext.getLoginUserId();
         int amount = request.getAmount();
+        int balanceAfter;
 
         if (amount > 0) {
-            userInfoService.addCredits(request.getUserId(), amount);
+            balanceAfter = userInfoService.addCredits(request.getUserId(), amount);
         } else if (amount < 0) {
-            userInfoService.deductCredits(request.getUserId(), -amount);
+            balanceAfter = userInfoService.deductCredits(request.getUserId(), -amount);
+        } else {
+            UserInfo userInfo = userInfoService.getUserInfo(request.getUserId());
+            if (userInfo == null) {
+                throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户不存在");
+            }
+            balanceAfter = userInfo.getRemainingCredits();
         }
 
         // 记录流水
-        UserInfo updatedUserInfo = userInfoService.getUserInfo(request.getUserId());
         creditTransactionService.recordTransaction(
                 request.getUserId(),
                 amount > 0 ? CreditTransactionType.ADMIN_ADJUST : CreditTransactionType.ADMIN_ADJUST,
                 amount,
-                updatedUserInfo.getRemainingCredits(),
+                balanceAfter,
                 CreditSourceType.ADMIN,
                 null,
                 request.getDescription() != null ? request.getDescription() : "管理员调整码点",
@@ -158,7 +164,7 @@ public class UserAdminController {
                 request.getUserId(),
                 amount > 0 ? "码点充值通知" : "码点扣减通知",
                 (amount > 0 ? "管理员为你充值了 " : "管理员扣减了你 ") + Math.abs(amount) + " 码点"
-                        + "，当前余额：" + updatedUserInfo.getRemainingCredits()
+                        + "，当前余额：" + balanceAfter
                         + (desc != null && !desc.equals("管理员调整码点") ? "。原因：" + desc : ""),
                 "credit_adjust",
                 null

@@ -9,16 +9,23 @@ import cn.wanyj.codefreex.mapper.InviteMapper;
 import cn.wanyj.codefreex.mapper.InviteUserMapper;
 import cn.wanyj.codefreex.model.entity.Invite;
 import cn.wanyj.codefreex.model.entity.InviteUser;
+import cn.wanyj.codefreex.model.enums.CreditSourceType;
+import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.enums.InviteStatus;
+import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.InviteService;
+import cn.wanyj.codefreex.service.UserInfoService;
+import cn.wanyj.codefreex.service.policy.InviteCreditPolicy;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 import static cn.wanyj.codefreex.model.entity.table.InviteTableDef.INVITE;
 import static cn.wanyj.codefreex.model.entity.table.InviteUserTableDef.INVITE_USER;
@@ -31,17 +38,25 @@ import static cn.wanyj.codefreex.model.entity.table.InviteUserTableDef.INVITE_US
 public class InviteServiceImpl implements InviteService {
 
     private static final int MAX_EXPIRE_HOURS_FOR_USER = 168; // 7天
-    private static final int MAX_USE_COUNT_FOR_USER = 3;
+    private static final int MAX_USE_COUNT_FOR_USER = 10;
     private static final java.util.Set<String> ADMIN_ROLES = java.util.Set.of("ROLE_ADMIN", "ROLE_PLATFORM_ADMIN");
 
     private final InviteMapper inviteMapper;
     private final InviteUserMapper inviteUserMapper;
     private final AuthRpcClient authRpcClient;
+    @Lazy
+    private final UserInfoService userInfoService;
+    private final CreditTransactionService creditTransactionService;
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Invite generateInviteCode(Long userId, String batch, Integer expireHours, Integer maxUseCount) {
         // 判断是否管理员
         boolean isAdmin = isAdminUser(userId);
+        int finalMaxUseCount = maxUseCount != null ? maxUseCount : 1;
+        if (finalMaxUseCount <= 0) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码使用次数必须大于0");
+        }
 
         // 普通用户限制
         if (!isAdmin) {
@@ -51,9 +66,9 @@ public class InviteServiceImpl implements InviteService {
             if (expireHours != null && expireHours > MAX_EXPIRE_HOURS_FOR_USER) {
                 throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码有效期最长为7天");
             }
-            // 最大使用次数3次
+            // 最大使用次数10次
             if (maxUseCount != null && maxUseCount > MAX_USE_COUNT_FOR_USER) {
-                throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码最多使用3次");
+                throw new BusinessException(ResponseCode.PARAMS_ERROR, "邀请码最多使用10次");
             }
         }
 
@@ -63,9 +78,24 @@ public class InviteServiceImpl implements InviteService {
         invite.setBatch(batch);
         invite.setStatus(InviteStatus.UNUSED.getValue());
         invite.setExpireTime(expireHours != null ? LocalDateTime.now().plusHours(expireHours) : null);
-        invite.setMaxUseCount(maxUseCount != null ? maxUseCount : 1);
+        invite.setMaxUseCount(finalMaxUseCount);
         invite.setUsedCount(0);
         inviteMapper.insert(invite);
+
+        if (!isAdmin) {
+            int cost = InviteCreditPolicy.calculateCreateCost(finalMaxUseCount);
+            int balanceAfter = userInfoService.deductCredits(userId, cost);
+            creditTransactionService.recordTransaction(
+                    userId,
+                    CreditTransactionType.CONSUME,
+                    -cost,
+                    balanceAfter,
+                    CreditSourceType.INVITE,
+                    invite.getId(),
+                    "创建邀请码消耗码点（可用次数 " + finalMaxUseCount + " 次）",
+                    userId
+            );
+        }
         return invite;
     }
 
@@ -121,6 +151,8 @@ public class InviteServiceImpl implements InviteService {
         inviteUser.setInviterId(invite.getUserId());
         inviteUser.setInviteeId(inviteeId);
         inviteUserMapper.insert(inviteUser);
+
+        rewardInviter(invite, inviteeId);
     }
 
     @Override
@@ -209,5 +241,26 @@ public class InviteServiceImpl implements InviteService {
 
     private String generateCode(String prefix) {
         return prefix + "_" + IdUtil.getSnowflakeNextIdStr();
+    }
+
+    private void rewardInviter(Invite invite, Long inviteeId) {
+        Long inviterId = invite.getUserId();
+        if (Objects.equals(inviterId, inviteeId)) {
+            return;
+        }
+        if (userInfoService.getUserInfo(inviterId) == null) {
+            userInfoService.createUserInfo(inviterId, null);
+        }
+        int balanceAfter = userInfoService.addCredits(inviterId, InviteCreditPolicy.INVITE_REWARD_CREDITS);
+        creditTransactionService.recordTransaction(
+                inviterId,
+                CreditTransactionType.GIFT,
+                InviteCreditPolicy.INVITE_REWARD_CREDITS,
+                balanceAfter,
+                CreditSourceType.INVITE,
+                invite.getId(),
+                "邀请新用户注册奖励",
+                inviteeId
+        );
     }
 }

@@ -10,6 +10,7 @@ import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.UserInfoService;
+import cn.wanyj.codefreex.service.policy.InviteCreditPolicy;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -41,26 +42,41 @@ public class UserInfoServiceImpl implements UserInfoService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public UserInfo createUserInfo(Long userId, Long inviterId) {
         return createUserInfo(userId, inviterId, null, null);
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public UserInfo createUserInfo(Long userId, Long inviterId, String nickname, String avatar) {
         // 检查是否已存在
         UserInfo existing = getUserInfo(userId);
         if (existing != null) {
             return existing;
         }
+        int initialCredits = inviterId != null ? InviteCreditPolicy.INVITE_REWARD_CREDITS : 0;
         UserInfo userInfo = new UserInfo();
         userInfo.setUserId(userId);
         userInfo.setInviterId(inviterId);
         userInfo.setNickname(nickname);
         userInfo.setAvatar(avatar);
-        userInfo.setTotalCredits(0);
-        userInfo.setRemainingCredits(0);
+        userInfo.setTotalCredits(initialCredits);
+        userInfo.setRemainingCredits(initialCredits);
         userInfo.setStatus("active");
         userInfoMapper.insert(userInfo);
+        if (initialCredits > 0) {
+            creditTransactionService.recordTransaction(
+                    userId,
+                    CreditTransactionType.GIFT,
+                    initialCredits,
+                    initialCredits,
+                    CreditSourceType.REGISTER_GIFT,
+                    inviterId,
+                    "通过邀请码注册奖励",
+                    inviterId
+            );
+        }
         return userInfo;
     }
 
@@ -76,7 +92,7 @@ public class UserInfoServiceImpl implements UserInfoService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public boolean addCredits(Long userId, int amount) {
+    public int addCredits(Long userId, int amount) {
         UserInfo userInfo = getUserInfo(userId);
         if (userInfo == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "用户信息不存在");
@@ -88,12 +104,12 @@ public class UserInfoServiceImpl implements UserInfoService {
                 .set(USER_INFO.TOTAL_CREDITS, newTotal)
                 .set(USER_INFO.REMAINING_CREDITS, newRemaining)
                 .update();
-        return true;
+        return newRemaining;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public boolean deductCredits(Long userId, int amount) {
+    public int deductCredits(Long userId, int amount) {
         if (amount <= 0) {
             throw new BusinessException(ResponseCode.PARAMS_ERROR, "扣减数量必须大于0");
         }
@@ -112,7 +128,7 @@ public class UserInfoServiceImpl implements UserInfoService {
         if (!updated) {
             throw new BusinessException(ResponseCode.OPERATION_ERROR, "码点不足，请先兑换码点");
         }
-        return true;
+        return userInfo.getRemainingCredits() - amount;
     }
 
     @Override

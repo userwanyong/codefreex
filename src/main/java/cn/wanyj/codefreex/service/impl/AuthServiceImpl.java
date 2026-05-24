@@ -30,6 +30,7 @@ import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -87,6 +88,7 @@ public class AuthServiceImpl implements AuthService {
     // ==================== 邮箱注册 ====================
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public TokenResponse register(RegisterRequest request) {
         LoginUserContext existing = authRpcClient.getUserByUsername(request.getEmail());
         if (existing != null) {
@@ -358,6 +360,7 @@ public class AuthServiceImpl implements AuthService {
     // ==================== 微信新用户完成注册 ====================
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public TokenResponse completeWechatLogin(WechatCompleteRequest request) {
         String tempKey = WECHAT_TEMP_KEY_PREFIX + request.getTempToken();
         String userData = stringRedisTemplate.opsForValue().get(tempKey);
