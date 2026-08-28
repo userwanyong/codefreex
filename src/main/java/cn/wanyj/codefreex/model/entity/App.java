@@ -4,7 +4,6 @@ import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
-import com.mybatisflex.core.handler.Fastjson2TypeHandler;
 import com.mybatisflex.core.keygen.KeyGenerators;
 import lombok.Data;
 
@@ -49,7 +48,11 @@ public class App {
 
     private Integer likeCount;
 
-    @Column(typeHandler = Fastjson2TypeHandler.class)
+    /**
+     * 应用标签（展示用快照）。标签唯一数据源为 app_tag 关联表，
+     * 此字段不落库，忽略生成 SQL，避免 SELECT 携带不存在的 tags 列。
+     */
+    @Column(ignore = true)
     private List<String> tags;
 
     private Long userId;

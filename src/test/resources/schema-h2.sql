@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS app
     priority      INT        DEFAULT 0               NOT NULL,
     view_count    INT        DEFAULT 0               NOT NULL,
     like_count    INT        DEFAULT 0               NOT NULL,
-    tags          TEXT                               NULL,
     user_id       BIGINT                             NOT NULL,
     edit_time     TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
     create_time   TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
