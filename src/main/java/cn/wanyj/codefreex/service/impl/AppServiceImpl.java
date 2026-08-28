@@ -1,13 +1,14 @@
 package cn.wanyj.codefreex.service.impl;
 
 import cn.hutool.core.util.IdUtil;
+import cn.wanyj.codefreex.auth.AuthRpcClient;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.exception.BusinessException;
 import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.AppLikeMapper;
 import cn.wanyj.codefreex.mapper.AppMapper;
 import cn.wanyj.codefreex.mapper.ChatHistoryMapper;
-import cn.wanyj.codefreex.model.entity.UserInfo;
+import cn.wanyj.codefreex.model.dto.LoginUserContext;
 import cn.wanyj.codefreex.model.entity.AppLike;
 import cn.wanyj.codefreex.model.dto.request.AppCreateRequest;
 import cn.wanyj.codefreex.model.dto.request.AppEditRequest;
@@ -22,7 +23,6 @@ import cn.wanyj.codefreex.service.AppStorageService;
 import cn.wanyj.codefreex.service.AppService;
 import cn.wanyj.codefreex.service.ChatMemoryService;
 import cn.wanyj.codefreex.service.TagService;
-import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -52,7 +52,7 @@ public class AppServiceImpl implements AppService {
     private final ChatMemoryService chatMemoryService;
     private final AppStorageService appStorageService;
     private final AppNginxService appNginxService;
-    private final UserInfoService userInfoService;
+    private final AuthRpcClient authRpcClient;
     private final TagService tagService;
 
     private static final DateTimeFormatter CURSOR_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
@@ -209,7 +209,7 @@ public class AppServiceImpl implements AppService {
 
         // 批量填充用户信息
         Set<Long> userIds = apps.stream().map(App::getUserId).collect(Collectors.toSet());
-        Map<Long, UserInfo> userInfoMap = fillUserInfoMap(userIds);
+        Map<Long, LoginUserContext> userInfoMap = fillUserInfoMap(userIds);
 
         List<AppVO> voList = apps.stream().map(app -> toAppVO(app, userInfoMap, tagService.getAppTagNames(app.getId()), null)).toList();
 
@@ -299,19 +299,19 @@ public class AppServiceImpl implements AppService {
     }
 
     /**
-     * 批量查询用户信息
+     * 批量查询用户展示信息（auth-service RPC，昵称为空时回退账号）
      */
-    private Map<Long, UserInfo> fillUserInfoMap(Set<Long> userIds) {
+    private Map<Long, LoginUserContext> fillUserInfoMap(Set<Long> userIds) {
         if (userIds.isEmpty()) {
             return Collections.emptyMap();
         }
-        return userInfoService.batchGetUserInfos(userIds);
+        return authRpcClient.batchGetUsers(userIds);
     }
 
     /**
      * App 转 AppVO（脱敏，含用户信息和标签）
      */
-    private AppVO toAppVO(App app, Map<Long, UserInfo> userInfoMap, List<String> tagNames, Boolean isLiked) {
+    private AppVO toAppVO(App app, Map<Long, LoginUserContext> userInfoMap, List<String> tagNames, Boolean isLiked) {
         AppVO vo = new AppVO();
         vo.setId(app.getId());
         vo.setAppName(app.getAppName());
@@ -333,10 +333,11 @@ public class AppServiceImpl implements AppService {
         vo.setEditTime(app.getEditTime());
         vo.setCreateTime(app.getCreateTime());
 
-        // 填充用户信息
-        UserInfo userInfo = userInfoMap.get(app.getUserId());
+        // 填充用户信息（昵称为空时回退账号）
+        LoginUserContext userInfo = userInfoMap.get(app.getUserId());
         if (userInfo != null) {
-            vo.setUserName(userInfo.getNickname());
+            vo.setUserName(userInfo.getNickname() != null && !userInfo.getNickname().isBlank()
+                    ? userInfo.getNickname() : userInfo.getUsername());
             vo.setUserAvatar(userInfo.getAvatar());
         }
 

@@ -1,37 +1,26 @@
 package cn.wanyj.codefreex.service;
 
-import cn.wanyj.codefreex.common.PageResponse;
-import cn.wanyj.codefreex.model.dto.request.UserQueryRequest;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
+ * 用户业务档案服务：码点与邀请关系（用户身份信息由 auth-service 统一管理）
+ *
  * @author wanyj
  */
 public interface UserInfoService {
 
     /**
-     * 根据用户ID获取用户关联信息
+     * 根据用户ID获取用户业务档案
      */
     UserInfo getUserInfo(Long userId);
 
     /**
-     * 注册时创建用户关联记录
+     * 用户首次进入业务系统时创建档案（存在则直接返回）
      */
     UserInfo createUserInfo(Long userId, Long inviterId);
-
-    /**
-     * 注册时创建用户关联记录（含昵称头像）
-     */
-    UserInfo createUserInfo(Long userId, Long inviterId, String nickname, String avatar);
-
-    /**
-     * 修改用户信息
-     */
-    boolean updateUserInfo(Long userId, UserInfo updateInfo);
 
     /**
      * 增加用户码点
@@ -48,38 +37,12 @@ public interface UserInfoService {
     int deductCredits(Long userId, int amount);
 
     /**
-     * 从RPC同步用户昵称头像到本地
-     */
-    void syncUserInfoFromRpc(Long userId, String nickname, String avatar);
-
-    /**
-     * 批量查询用户信息
+     * 批量查询用户业务档案
      */
     Map<Long, UserInfo> batchGetUserInfos(Set<Long> userIds);
 
     /**
-     * 管理员分页查询用户列表
+     * 删除用户业务档案（用户被删除时清理本地数据）
      */
-    PageResponse<UserInfo> listUsersForAdmin(UserQueryRequest request);
-
-    /**
-     * 设置用户状态（启用/禁用）
-     */
-    void setUserStatus(Long userId, String status);
-
-    /**
-     * 更新用户头像
-     *
-     * @param userId    用户ID
-     * @param avatarUrl 头像URL
-     */
-    void updateAvatar(Long userId, String avatarUrl);
-
-    /**
-     * 更新用户昵称
-     *
-     * @param userId   用户ID
-     * @param nickname 昵称
-     */
-    void updateNickname(Long userId, String nickname);
+    void deleteUserInfo(Long userId);
 }

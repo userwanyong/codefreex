@@ -26,8 +26,6 @@ public class LoginUserContext implements Serializable {
 
     private String avatar;
 
-    private Long tenantId;
-
     private List<String> roles;
 
     private List<String> permissions;

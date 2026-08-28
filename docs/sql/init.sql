@@ -1,31 +1,34 @@
 -- =============================================
 -- CodeFreeX 数据库初始化脚本
 -- =============================================
+-- 说明：
+-- 1. 用户身份（账号/昵称/头像/角色/权限/登录方式）统一由 auth-service 管理，
+--    需先执行 auth-service 的初始化脚本：auth-service/docs/init-schema.sql
+--    （内含租户、内置角色、权限、默认管理员 admin/123456、平台级登录方式种子数据）。
+-- 2. 本库只存业务档案（码点、邀请、应用等），user_id 即 auth-service 的用户ID。
+-- 3. 脚本可重复执行：建表用 IF NOT EXISTS，种子数据用 INSERT IGNORE。
+-- =============================================
 
 CREATE DATABASE IF NOT EXISTS codefreex DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 USE codefreex;
 
 -- =============================================
--- 1. 用户关联表
+-- 1. 用户关联表（纯业务档案：昵称/头像/状态等身份信息见 auth-service）
 -- =============================================
 CREATE TABLE IF NOT EXISTS user_info
 (
     id                BIGINT                             COMMENT 'id' PRIMARY KEY,
     user_id           BIGINT                             NOT NULL COMMENT '用户id（关联认证服务用户）',
     inviter_id        BIGINT                             NULL COMMENT '邀请人用户id',
-    nickname          VARCHAR(128)                        NULL COMMENT '用户昵称（冗余自认证服务）',
-    avatar            VARCHAR(512)                        NULL COMMENT '用户头像URL（冗余自认证服务）',
     total_credits     INT          DEFAULT 0             NOT NULL COMMENT '累计获得额度',
     remaining_credits INT          DEFAULT 0             NOT NULL COMMENT '剩余额度',
-    status            VARCHAR(32)  DEFAULT 'active'      NOT NULL COMMENT '用户状态（active-正常/disabled-已禁用）',
     create_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
     update_time       DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     is_delete         TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否删除',
     UNIQUE KEY uk_userId (user_id),
-    INDEX idx_inviterId (inviter_id),
-    INDEX idx_status (status)
-) COMMENT '用户关联表' COLLATE = utf8mb4_unicode_ci;
+    INDEX idx_inviterId (inviter_id)
+) COMMENT '用户关联表（仅业务档案，用户身份唯一数据源为 auth-service）' COLLATE = utf8mb4_unicode_ci;
 
 -- =============================================
 -- 2. 邀请表
@@ -281,3 +284,19 @@ CREATE TABLE IF NOT EXISTS notification
     INDEX idx_userId_isRead (user_id, is_read),
     INDEX idx_type (type)
 ) COMMENT '通知表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 15. 默认数据：预设标签
+-- =============================================
+-- 首页标签筛选与创建应用选择标签依赖标签数据，空标签会导致页面报错。
+-- 使用与线上环境一致的固定雪花 ID，保证各环境 app_tag 关联数据可对齐；
+-- INSERT IGNORE 依赖主键/唯一键幂等，可重复执行。
+INSERT IGNORE INTO `tag` (`id`, `name`, `sort_order`) VALUES
+(1874593899712872449, '工具', 1),
+(1874593899712872450, '游戏', 2),
+(1874593899712872451, '教育', 3),
+(1874593899712872452, '数据可视化', 4),
+(1874593899712872453, '音乐', 5),
+(1874593899712872454, '设计', 6),
+(1874593899712872455, 'AI 应用', 7),
+(1874593899712872456, '效率办公', 8);

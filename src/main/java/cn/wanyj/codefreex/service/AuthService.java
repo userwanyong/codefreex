@@ -1,60 +1,74 @@
 package cn.wanyj.codefreex.service;
 
 import cn.wanyj.codefreex.model.dto.LoginUserContext;
+import cn.wanyj.codefreex.model.dto.OAuthLoginOutcome;
+import cn.wanyj.codefreex.model.dto.request.LoginCodeRequest;
+import cn.wanyj.codefreex.model.dto.request.OAuthCompleteRequest;
 import cn.wanyj.codefreex.model.dto.request.RegisterRequest;
-import cn.wanyj.codefreex.model.dto.request.WechatCompleteRequest;
 import cn.wanyj.codefreex.model.dto.response.TokenResponse;
-import cn.wanyj.codefreex.model.dto.response.WechatLoginResponse;
-import cn.wanyj.codefreex.model.dto.response.WechatQrCodeResponse;
+
+import java.util.List;
 
 /**
- * 认证服务（封装 RPC 调用 + Session 管理 + Authing 第三方登录）
+ * 认证服务：全部认证授权能力由 auth-service 微服务通过 RPC 提供，
+ * 本服务仅做业务编排（邀请码消费、本地用户信息初始化、令牌下发）。
+ *
  * @author wanyj
  */
 public interface AuthService {
 
     /**
-     * 发送邮箱注册验证码
+     * 查询当前租户开放的登录方式（管理端开闭后实时同步），如 password / email:smtp / oauth:gitee
      */
-    void sendEmailCode(String email);
+    List<String> listLoginMethods();
 
     /**
-     * 邮箱注册（验证码 + 密码 + 邀请码）
+     * 账号密码登录（用户名或邮箱）
+     */
+    TokenResponse loginByPassword(String username, String password);
+
+    /**
+     * 发送登录验证码（邮箱/短信，方式须已启用）
+     */
+    void sendCode(String method, String target);
+
+    /**
+     * 验证码登录；新用户（目标不存在将自动注册）须携带有效邀请码
+     */
+    TokenResponse loginByCode(LoginCodeRequest request);
+
+    /**
+     * 邮箱注册（密码 + 邀请码）
      */
     TokenResponse register(RegisterRequest request);
 
     /**
-     * 邮箱密码登录
+     * 构建 OAuth 授权页 URL（gitee / github），前端跳转该 URL 发起授权
      */
-    TokenResponse loginByEmail(String email, String password);
+    String buildOAuthAuthorizeUrl(String provider);
 
     /**
-     * 生成微信小程序登录二维码
+     * 处理 OAuth 提供方回调：老用户直接登录，新用户返回待补邀请码的临时令牌
      */
-    WechatQrCodeResponse generateWechatQrCode();
+    OAuthLoginOutcome handleOAuthCallback(String provider, String code, String state);
 
     /**
-     * 查询微信小程序登录二维码状态
+     * OAuth 新用户完成注册（提交邀请码）
      */
-    WechatQrCodeResponse queryWechatQrCodeStatus(String qrcodeId);
+    TokenResponse completeOAuthRegistration(OAuthCompleteRequest request);
 
     /**
-     * 微信小程序扫码登录（用 ticket 换取用户信息）
+     * 刷新令牌（轮换返回新令牌对）
      */
-    WechatLoginResponse loginByWechatQrCode(String ticket);
+    TokenResponse refresh(String refreshToken);
 
     /**
-     * 微信新用户完成注册（提交邀请码）
+     * 登出（拉黑 access + 删除 refresh）
      */
-    TokenResponse completeWechatLogin(WechatCompleteRequest request);
+    void logout(String accessToken, String refreshToken);
 
     /**
-     * 登出
-     */
-    void logout();
-
-    /**
-     * 获取当前登录用户信息
+     * 获取当前登录用户完整信息（含本地昵称头像回填）
      */
     LoginUserContext getLoginUser();
 }

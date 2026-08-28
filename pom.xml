@@ -113,7 +113,7 @@
         <dependency>
             <groupId>cn.wanyj.auth</groupId>
             <artifactId>auth-service-api</artifactId>
-            <version>0.0.1-SNAPSHOT</version>
+            <version>1.1</version>
         </dependency>
         <dependency>
             <groupId>org.apache.dubbo</groupId>
@@ -139,13 +139,6 @@
             <groupId>org.apache.dubbo</groupId>
             <artifactId>dubbo-rpc-triple</artifactId>
             <version>${dubbo.version}</version>
-        </dependency>
-
-        <!-- ==================== Authing Java SDK (微信/邮箱登录) ==================== -->
-        <dependency>
-            <groupId>cn.authing</groupId>
-            <artifactId>authing-java-sdk</artifactId>
-            <version>3.1.20</version>
         </dependency>
 
         <!-- ==================== LangChain4j (AI 编排框架) ==================== -->

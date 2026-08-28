@@ -6,16 +6,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 管理员用户视图对象：身份与角色来自 auth-service RPC，码点来自本地业务表
+ * 个人中心视图对象：身份信息来自 auth-service RPC，码点/邀请来自本地业务表
  *
  * @author wanyj
  */
 @Data
-public class AdminUserVO {
+public class UserProfileVO {
 
     private Long userId;
 
-    /** 登录账号（第三方登录账号形如 gitee_xxx / github_xxx） */
     private String username;
 
     private String nickname;
@@ -24,12 +23,16 @@ public class AdminUserVO {
 
     private String email;
 
+    private Boolean emailVerified;
+
     private String phone;
+
+    private Boolean phoneVerified;
 
     private List<String> roles;
 
-    /** 1-正常，0-禁用（auth-service） */
-    private Integer status;
+    /** 邀请人用户ID（本地业务数据，可为空） */
+    private Long inviterId;
 
     private Integer totalCredits;
 
@@ -38,6 +41,5 @@ public class AdminUserVO {
     /** 账号创建时间（auth-service） */
     private LocalDateTime createTime;
 
-    /** 已绑定的第三方平台（gitee / github，详情接口填充） */
-    private List<String> oauthProviders;
+    private LocalDateTime updateTime;
 }

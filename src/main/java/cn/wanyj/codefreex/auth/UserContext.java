@@ -1,33 +1,31 @@
 package cn.wanyj.codefreex.auth;
 
 import cn.wanyj.codefreex.model.dto.LoginUserContext;
-import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
- * 用户上下文工具类，从 Session 中获取当前登录用户信息
+ * 用户上下文工具类，保存当前请求的登录用户信息。
+ * <p>
+ * 由 {@link TokenAuthFilter} 在请求进入时通过 auth-service 的 parseToken 解析
+ * Authorization: Bearer 令牌后填充，请求结束时清理。控制器与切面通过本类读取。
+ *
+ * @author wanyj
  */
 public class UserContext {
 
-    private static final String SESSION_USER_KEY = "loginUser";
+    private static final ThreadLocal<LoginUserContext> CURRENT_USER = new ThreadLocal<>();
 
     private UserContext() {
     }
 
     /**
-     * 获取当前登录用户
+     * 获取当前登录用户（未登录返回 null）
      */
     public static LoginUserContext getLoginUser() {
-        HttpServletRequest request = getRequest();
-        if (request == null) {
-            return null;
-        }
-        return (LoginUserContext) request.getSession().getAttribute(SESSION_USER_KEY);
+        return CURRENT_USER.get();
     }
 
     /**
-     * 获取当前登录用户ID
+     * 获取当前登录用户ID（未登录返回 null）
      */
     public static Long getLoginUserId() {
         LoginUserContext user = getLoginUser();
@@ -35,24 +33,17 @@ public class UserContext {
     }
 
     /**
-     * 设置当前登录用户到 Session
+     * 设置当前登录用户（仅作用于本次请求）
      */
     public static void setLoginUser(LoginUserContext user) {
-        HttpServletRequest request = getRequest();
-        if (request != null) {
-            request.getSession().setAttribute(SESSION_USER_KEY, user);
-        }
+        CURRENT_USER.set(user);
     }
 
     /**
-     * 移除当前登录用户（登出）
+     * 移除当前登录用户（登出 / 请求结束）
      */
     public static void removeLoginUser() {
-        HttpServletRequest request = getRequest();
-        if (request != null) {
-            request.getSession().removeAttribute(SESSION_USER_KEY);
-            request.getSession().invalidate();
-        }
+        CURRENT_USER.remove();
     }
 
     /**
@@ -73,10 +64,5 @@ public class UserContext {
         return user.getRoles() != null &&
                 (user.getRoles().contains("ROLE_ADMIN") ||
                  user.getRoles().contains("ROLE_PLATFORM_ADMIN"));
-    }
-
-    private static HttpServletRequest getRequest() {
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        return attrs != null ? attrs.getRequest() : null;
     }
 }

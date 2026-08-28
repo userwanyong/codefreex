@@ -10,7 +10,7 @@ spring:
     restart:
       enabled: false
 server:
-  port: 8123
+  port: 18123
   servlet:
     context-path: /api
 # MyBatis-Flex
@@ -37,6 +37,12 @@ dubbo:
   consumer:
     timeout: 5000
     check: false
+    retries: 0
+# 认证授权服务（auth-service）集成参数，实际值在 profile 中配置
+auth-service:
+  tenant-uid: ${AUTH_SERVICE_TENANT_UID:}
+  rpc-token: ${AUTH_SERVICE_RPC_TOKEN:}
+  frontend-url: ${AUTH_SERVICE_FRONTEND_URL:http://localhost:5173}
 # LangChain4j OpenAI 配置（主生成模型 - 流式，敏感信息在 application-local.yml 中配置）
 langchain4j:
   open-ai:
