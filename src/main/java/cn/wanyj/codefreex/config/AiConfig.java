@@ -14,6 +14,7 @@ import org.springframework.core.io.ResourceLoader;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 /**
  * AI 配置类
@@ -51,6 +52,7 @@ public class AiConfig {
                 .modelName(properties.getModelName())
                 .temperature(properties.getTemperature())
                 .maxTokens(properties.getMaxTokens())
+                .timeout(properties.getTimeout())
                 .build();
     }
 
@@ -90,6 +92,8 @@ public class AiConfig {
         private String modelName;
         private double temperature = 0.3;
         private int maxTokens = 2048;
+        /** 单次调用超时；推理型模型长推理可能超过默认 60s */
+        private Duration timeout = Duration.ofMinutes(5);
     }
 
     /**

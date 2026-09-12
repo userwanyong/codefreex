@@ -55,7 +55,11 @@ langchain4j:
 ai:
   review:
     temperature: 0.3
-    max-tokens: 2048
+    # 预审核模型同时承担迭代修改的工具调用循环；该模型为深度推理型，
+    # 修改大文件仅推理即可消耗 ~7K token，上限过小会在输出 tool_calls 前被 length 截断（表现为空回复）
+    max-tokens: 32768
+    # 推理型模型长推理单次调用可超过 60s，放宽同步调用超时
+    timeout: 5m
   prompts-dir: classpath:prompts/
 # Actuator + Prometheus 监控
 management:

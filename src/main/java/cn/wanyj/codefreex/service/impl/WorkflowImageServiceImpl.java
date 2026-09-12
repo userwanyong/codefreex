@@ -186,7 +186,8 @@ public class WorkflowImageServiceImpl implements WorkflowImageService {
                 description != null ? description : "简约通用Logo，品牌名称: " + keyword);
 
         ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
-        String svgCode = extractSvg(response.aiMessage().text().trim());
+        String aiText = response.aiMessage().text();
+        String svgCode = extractSvg(aiText == null ? "" : aiText.trim());
 
         if (svgCode.isBlank() || !svgCode.startsWith("<svg")) {
             throw new RuntimeException("AI 未返回有效的 SVG");

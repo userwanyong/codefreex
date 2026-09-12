@@ -102,6 +102,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private static final String NODE_BUILD = "buildNode";
     private static final String NODE_FAIL = "failNode";
 
+    /** 可视化编辑消息标记，由前端"选择元素"流程生成（AppChatPage handleSend） */
+    private static final String VISUAL_EDIT_MARKER = "[可视化编辑]";
+
     private static final Map<String, Channel<?>> WORKFLOW_SCHEMA = Map.of(
             "retryCount", Channel.of(() -> 0),
             "imageAssets", Channel.of(ArrayList::new)
@@ -171,8 +174,13 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             eventCache.put(appId, new ArrayList<>());
             sinkAppIdMap.put(sink, appId);
             CURRENT_APP_ID.set(appId);
+            // 已部署应用的线上版本不受代码修改影响（部署目录独立），整个工作流期间保持 deployed 状态，
+            // 否则运行中刷新页面会因状态为 generating 丢失"重新部署/取消部署"入口，用户感知不到线上仍是旧版本
+            boolean wasDeployed = AppStatus.DEPLOYED.getValue().equals(app.getStatus());
             try {
-                appService.updateAppStatus(appId, AppStatus.GENERATING.getValue());
+                if (!wasDeployed) {
+                    appService.updateAppStatus(appId, AppStatus.GENERATING.getValue());
+                }
                 userHistory = chatHistoryService.saveUserMessage(appId, userId, message);
                 updateStatus(appId, "running", NODE_PROMPT_GUARD, app.getCodeGenType(), 0, "workflow started");
 
@@ -202,7 +210,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     String errorMessage = finalState.errorMessageOr("Prompt rejected");
                     log.warn("[{}] 工作流被拦截, appId={}, 原因={}", "Workflow", appId, errorMessage);
                     persistFailure(appId, userId, userHistory, errorMessage);
-                    appService.updateAppStatus(appId, AppStatus.DRAFT.getValue());
+                    restoreAppStatus(appId, wasDeployed, AppStatus.DRAFT);
                     updateStatus(appId, "blocked", finalState.currentNode(), finalState.route(),
                             finalState.retryCount(), errorMessage);
                     recordWorkflowUsage(appId, userId, startTime, "fail", errorMessage);
@@ -220,7 +228,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                                 appId, userId, promptLoader.load("workflow_chat.txt"));
                         chatMemory.add(AiMessage.from(chatResponse));
                     }
-                    appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                    restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     log.info("[{}] ========= 直接对话完成, appId={} =========", "Workflow", appId);
                     updateStatus(appId, "completed", NODE_CHAT_DIRECT, app.getCodeGenType(),
                             finalState.retryCount(), "chat completed");
@@ -240,7 +248,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     ChatMemory chatMemory = chatMemoryService.getChatMemory(
                             appId, userId, promptLoader.load("workflow_visual_edit.txt"));
                     chatMemory.add(AiMessage.from("可视化编辑已完成，修改已保存到文件系统"));
-                    appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                    restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     saveNodeMessage(appId, userId, userHistory.getId(), NODE_EDIT_COMPLETE, "edit completed");
                     log.info("[{}] ========= 可视化编辑完成, appId={}, 重试次数={} =========", "Workflow", appId, finalState.retryCount());
                     updateStatus(appId, "completed", NODE_VISUAL_EDIT, app.getCodeGenType(),
@@ -249,7 +257,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     ChatMemory chatMemory = chatMemoryService.getChatMemory(
                             appId, userId, promptLoader.load(resolvePromptTemplate(finalState.routeType())));
                     chatMemory.add(AiMessage.from("代码已生成并保存到文件系统"));
-                    appService.updateAppStatus(appId, AppStatus.GENERATED.getValue());
+                    restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     saveNodeMessage(appId, userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
                     log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={} =========", "Workflow", appId, finalState.route(), finalState.retryCount());
                     updateStatus(appId, "completed", NODE_PERSIST, finalState.route(),
@@ -260,7 +268,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 emitDone(sink);
             } catch (Exception e) {
                 log.error("workflow failed, appId={}", appId, e);
-                appService.updateAppStatus(appId, AppStatus.DRAFT.getValue());
+                restoreAppStatus(appId, wasDeployed, AppStatus.DRAFT);
                 updateStatus(appId, "failed", "error", app.getCodeGenType(), 0, e.getMessage());
                 recordWorkflowUsage(appId, userId, startTime, "fail", e.getMessage());
                 if (userHistory != null) {
@@ -415,6 +423,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     }
 
     private String classifyIntent(String message, Long appId) {
+        // [可视化编辑] 前缀由前端"选择元素"流程生成，用户已明确指定要编辑的元素，
+        // 意图无歧义，直接短路返回，避免 LLM 误判（如把"点击没反应"判成普通对话）
+        if (message != null && message.startsWith(VISUAL_EDIT_MARKER)) {
+            log.info("[{}] 检测到可视化编辑标记, 直接路由, appId={}", "Workflow", appId);
+            return "visual_edit";
+        }
         try {
             String prompt = promptLoader.load("workflow_intent.txt") + message;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
@@ -508,30 +522,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         messages.add(SystemMessage.from(systemPrompt));
         messages.add(UserMessage.from("请根据用户的编辑指令修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户编辑指令:\n" + message));
 
-        // tool-calling 循环，最多 15 轮
-        int maxRounds = 15;
-        String editSummary = "";
-        for (int round = 1; round < maxRounds; round++) {
-            ChatRequest chatRequest = ChatRequest.builder()
-                    .messages(messages)
-                    .toolSpecifications(toolSpecs)
-                    .build();
-            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
-            accumulateTokens(appId, chatResponse);
-            AiMessage aiMessage = chatResponse.aiMessage();
-            messages.add(aiMessage);
-
-            if (aiMessage.hasToolExecutionRequests()) {
-                for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
-                    log.info("[{}] visualEditNode 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
-                    String toolResult = executeToolCall(fileTools, toolRequest);
-                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
-                }
-            } else {
-                editSummary = aiMessage.text();
-                break;
-            }
-        }
+        // tool-calling 循环，最多 15 轮（空回复自动追问，见 runIterationToolLoop）
+        String editSummary = runIterationToolLoop(fileTools, toolSpecs, messages, appId, "visualEditNode", 15);
 
         // 读取修改后的主文件内容作为 generatedContent（供质检节点使用）
         String generatedContent = readMainFileContent(rootDir);
@@ -568,6 +560,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         return Map.of(
                 "intent", "visual_edit",
                 "generatedContent", generatedContent,
+                "fileEditMode", true,
                 "currentNode", NODE_VISUAL_EDIT,
                 "statusMessage", "visual edit completed");
     }
@@ -754,6 +747,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             // 后续迭代：使用工具调用模式，AI 自主读取和修改文件
             log.info("[{}] codeGenNode 检测到已有文件，进入迭代修改模式, appId={}", "Workflow", appId);
             generatedContent = runCodeGenIteration(rootDir, state.enhancedPrompt(), appId);
+            // 迭代修改直接落盘，Vue 等需要构建的项目必须重新构建才能让修改生效
+            rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "迭代修改");
         } else {
             // 初次生成：保持流式生成
             boolean[] incrementalSaved = {false};
@@ -785,6 +780,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
         return Map.of(
                 "generatedContent", generatedContent,
+                "fileEditMode", hasExistingFiles,
                 "currentNode", NODE_CODE_GEN,
                 "statusMessage", "code generated and persisted");
     }
@@ -802,6 +798,32 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         messages.add(UserMessage.from("请根据用户需求修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户需求:\n" + enhancedPrompt));
 
         int maxRounds = 15;
+        String contentBefore = readMainFileContent(rootDir);
+        String finalText = runIterationToolLoop(fileTools, toolSpecs, messages, appId, "codeGenIteration", maxRounds);
+        boolean changed = !contentBefore.equals(readMainFileContent(rootDir));
+
+        // AI 可能只读不改、以纯文本形式描述修改，导致需求被静默丢弃；此时追加强提醒重试一次
+        if (!changed) {
+            log.warn("[Workflow] codeGenIteration 首轮未产生任何文件变更，追加强提醒重试, appId={}", appId);
+            messages.add(UserMessage.from("你还没有对任何文件做出修改。请立即使用 editFile（局部修改）或 writeFile（重写/新建）工具将需求落实为代码变更，禁止只在回复中描述或贴出代码。如果确认现有代码已完整实现该需求、确实无需修改，请只回复：无需修改"));
+            finalText = runIterationToolLoop(fileTools, toolSpecs, messages, appId, "codeGenIteration", maxRounds);
+            changed = !contentBefore.equals(readMainFileContent(rootDir));
+        }
+
+        if (!changed && !finalText.contains("无需修改")) {
+            log.error("[Workflow] codeGenIteration 结束但未修改任何文件, appId={}", appId);
+            throw new RuntimeException("AI 未对项目文件做出任何修改，本次需求未生效");
+        }
+        return readMainFileContent(rootDir);
+    }
+
+    /**
+     * 迭代工具调用循环：执行 AI 的工具请求直至其给出最终文本回复。
+     * 返回 AI 的最终文本回复（轮次耗尽仍未回复时返回空串）。
+     */
+    private String runIterationToolLoop(WorkflowFileTools fileTools, List<ToolSpecification> toolSpecs,
+                                        List<ChatMessage> messages, Long appId, String node, int maxRounds) {
+        String finalText = "";
         for (int round = 0; round < maxRounds; round++) {
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(messages)
@@ -810,27 +832,34 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
             accumulateTokens(appId, chatResponse);
             AiMessage aiMessage = chatResponse.aiMessage();
-            messages.add(aiMessage);
 
             if (aiMessage.hasToolExecutionRequests()) {
+                messages.add(aiMessage);
                 for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
-                    log.info("[{}] codeGenIteration 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
+                    log.info("[{}] {} 执行工具: {} (round={})", "Workflow", node, toolRequest.name(), round);
                     String toolResult = executeToolCall(fileTools, toolRequest);
                     messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
                 }
+            } else if (aiMessage.text() == null || aiMessage.text().isBlank()) {
+                // 模型返回空内容（如仅推理无正文）：原样入队会导致后续请求 content=nil 被服务商拒绝，
+                // 用占位消息保持历史合法，并追问继续任务
+                log.warn("[{}] {} 第{}轮返回空内容，追问继续, appId={}", "Workflow", node, round, appId);
+                messages.add(AiMessage.from("（空回复）"));
+                messages.add(UserMessage.from("你上一轮回复内容为空。请继续任务：直接调用工具执行修改，或给出明确的文字回复。"));
             } else {
-                // AI 完成修改
+                // AI 给出最终回复，结束循环
+                messages.add(aiMessage);
+                finalText = aiMessage.text();
                 break;
             }
         }
-
-        return readMainFileContent(rootDir);
+        return finalText;
     }
 
     private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, ChatHistory userHistory, Long userId, FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> qualityCheckNode 开始执行, 当前重试次数={}", "Workflow", state.retryCount());
         emitToolRequest(sink, NODE_QUALITY_CHECK, Map.of("retry", state.retryCount()));
-        QualityCheckResult qualityCheckResult = qualityCheck(state.routeType(), state.generatedContent());
+        QualityCheckResult qualityCheckResult = qualityCheck(state.routeType(), state.generatedContent(), state.fileEditMode());
         log.info("[{}] <<< qualityCheckNode 完成, 通过={}, 原因={}", "Workflow", qualityCheckResult.pass(), qualityCheckResult.reason());
         emitToolExecuted(sink, NODE_QUALITY_CHECK, qualityCheckResult);
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_QUALITY_CHECK, qualityCheckResult.reason());
@@ -861,41 +890,19 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         messages.add(SystemMessage.from(systemPrompt));
         messages.add(UserMessage.from("请根据上述失败原因修复项目代码。先列出文件结构，再定位问题并修复。"));
 
-        // tool-calling 循环，最多 15 轮
-        int maxRounds = 15;
-        String fixSummary = "";
-        for (int round = 0; round < maxRounds; round++) {
-            ChatRequest chatRequest = ChatRequest.builder()
-                    .messages(messages)
-                    .toolSpecifications(toolSpecs)
-                    .build();
-            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
-            accumulateTokens(appId, chatResponse);
-            AiMessage aiMessage = chatResponse.aiMessage();
-            messages.add(aiMessage);
-
-            // 没有工具调用请求 → AI 给出了最终回复
-            if (aiMessage.hasToolExecutionRequests()) {
-                // 执行所有工具调用
-                for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
-                    log.info("[{}] codeFixNode 执行工具: {} (round={})", "Workflow", toolRequest.name(), round);
-                    String toolResult = executeToolCall(fileTools, toolRequest);
-                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
-                }
-            } else {
-                // AI 返回纯文本，修复完成
-                fixSummary = aiMessage.text() != null ? aiMessage.text() : "";
-                break;
-            }
-        }
+        // tool-calling 循环，最多 15 轮（空回复自动追问，见 runIterationToolLoop）
+        String fixSummary = runIterationToolLoop(fileTools, toolSpecs, messages, appId, "codeFixNode", 15);
 
         log.info("[{}] <<< codeFixNode 完成, appId={}, 修复摘要长度={}", "Workflow", appId, fixSummary != null ? fixSummary.length() : 0);
         emitToolExecuted(sink, NODE_CODE_FIX, Map.of("summary", fixSummary), fixSummary);
         saveNodeMessage(appId, userId, userHistory.getId(), NODE_CODE_FIX, fixSummary);
+        // 修复可能修改了源码，Vue 等需要构建的项目必须重新构建才能让修复生效
+        rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "代码修复");
         // 读取修复后的磁盘文件内容，供质量检查节点使用
         String updatedContent = readMainFileContent(rootDir);
         return Map.of(
                 "generatedContent", updatedContent,
+                "fileEditMode", true,
                 "lastFixReason", "",
                 "currentNode", NODE_CODE_FIX,
                 "statusMessage", "code fix applied");
@@ -1220,12 +1227,44 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
     }
 
-    private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent) {
+    /**
+     * 迭代修改/代码修复后，若存在 source/ 目录（Vue 等需要构建的项目），重新构建使修改生效。
+     * 构建失败仅告警不中断工作流，交由后续节点兜底。
+     */
+    private void rebuildVueProjectIfSourceExists(Path rootDir, Long appId, Long userId, Long parentId,
+                                                 FluxSink<ServerSentEvent<String>> sink, String reason) {
+        if (!Files.exists(rootDir.resolve("source"))) {
+            return;
+        }
+        log.info("[Workflow] 检测到 source/ 目录，{}后开始重新构建, appId={}", reason, appId);
+        emitToolRequest(sink, NODE_BUILD, Map.of("step", "rebuild"));
+        try {
+            projectBuildService.buildVueProject(rootDir, progress -> {
+                log.info("[Workflow] 重新构建进度: {}, appId={}", progress, appId);
+                if ("npm_install".equals(progress)) {
+                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
+                } else if ("npm_build".equals(progress)) {
+                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
+                }
+            });
+            emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), reason + "后重新构建完成");
+            saveNodeMessage(appId, userId, parentId, NODE_BUILD, reason + "后重新构建完成");
+            log.info("[Workflow] {}后重新构建完成, appId={}", reason, appId);
+        } catch (Exception e) {
+            log.warn("[Workflow] {}后重新构建失败, 继续流程, appId={}", reason, appId, e);
+        }
+    }
+
+    private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent, boolean fileEditMode) {
         if (generatedContent == null || generatedContent.isBlank()) {
             return new QualityCheckResult(false, "AI returned empty content");
         }
         if (generatedContent.contains("QUALITY_FAIL")) {
             return new QualityCheckResult(false, "Triggered quality fail marker");
+        }
+        // 文件编辑模式下内容直接来自磁盘文件拼接，非空即代表产物存在，无需按生成格式校验
+        if (fileEditMode) {
+            return new QualityCheckResult(true, "ok");
         }
         if (codeGenType == CodeGenType.HTML && extractHtml(generatedContent).isBlank()) {
             return new QualityCheckResult(false, "HTML block missing");
@@ -1268,6 +1307,17 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         } catch (Exception ignored) {
             log.warn("Persist workflow failure message failed, appId={}", appId);
         }
+    }
+
+    /**
+     * 工作流终点回写应用状态：已部署应用运行期间状态保持 deployed 未变，无需回写；
+     * 其余应用使用本次工作流的默认状态。
+     */
+    private void restoreAppStatus(Long appId, boolean wasDeployed, AppStatus defaultStatus) {
+        if (wasDeployed) {
+            return;
+        }
+        appService.updateAppStatus(appId, defaultStatus.getValue());
     }
 
     private void saveNodeMessage(Long appId, Long userId, Long parentId, String node, String content) {
@@ -1745,6 +1795,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         String generatedContent() {
             return value("generatedContent", "");
+        }
+
+        /**
+         * generatedContent 是否直接来自磁盘文件（迭代修改/代码修复/可视化编辑模式），
+         * 此时内容为原始文件拼接而非 ```file: 代码块格式，质检不应按代码块格式校验。
+         */
+        boolean fileEditMode() {
+            return value("fileEditMode", false);
         }
 
         boolean qualityPass() {
