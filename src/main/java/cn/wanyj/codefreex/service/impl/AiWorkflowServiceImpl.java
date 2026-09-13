@@ -532,23 +532,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         boolean hasSourceDir = Files.exists(rootDir.resolve("source"));
         log.info("[Workflow] visualEditNode 构建检查, appId={}, codeGenType={}, hasSourceDir={}", appId, app.getCodeGenType(), hasSourceDir);
         if (hasSourceDir) {
-            log.info("[Workflow] 可视化编辑完成，检测到 source/ 目录，开始重新构建, appId={}", appId);
-            emitToolRequest(sink, NODE_BUILD, Map.of("step", "rebuild_after_visual_edit"));
-            try {
-                projectBuildService.buildVueProject(rootDir, progress -> {
-                    log.info("[Workflow] 重新构建进度: {}, appId={}", progress, appId);
-                    if ("npm_install".equals(progress)) {
-                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
-                    } else if ("npm_build".equals(progress)) {
-                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
-                    }
-                });
-                emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "可视化编辑后重新构建完成");
-                saveNodeMessage(appId, userId, userHistory.getId(), NODE_BUILD, "可视化编辑后构建完成");
-                log.info("[Workflow] 可视化编辑后重新构建完成, appId={}", appId);
-            } catch (Exception e) {
-                log.warn("[Workflow] 可视化编辑后构建失败, 继续流程, appId={}", appId, e);
-            }
+            // 构建失败自动修复一轮（错误输出注入修复迭代），仍未成功则告警继续
+            buildVueProjectWithSelfHeal(rootDir, appId, userId, userHistory.getId(), sink, message, 1, false, "可视化编辑");
             // 构建后重新读取产物内容供质检
             generatedContent = readMainFileContent(rootDir);
         }
@@ -769,7 +754,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             codeGenMessageSaved = true;
             if (state.routeType() == CodeGenType.VUE && incrementalSaved[0]) {
                 // 增量保存已将文件写入 rootDir/，需要移到 rootDir/source/ 后执行构建
-                buildIncrementalVueProject(rootDir, appId, userId, userHistory.getId(), sink);
+                buildIncrementalVueProject(rootDir, appId, userId, userHistory.getId(), sink, state.enhancedPrompt());
             }
         }
 
@@ -824,22 +809,44 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private String runIterationToolLoop(WorkflowFileTools fileTools, List<ToolSpecification> toolSpecs,
                                         List<ChatMessage> messages, Long appId, String node, int maxRounds) {
         String finalText = "";
+        boolean reasoningRepaired = false;
         for (int round = 0; round < maxRounds; round++) {
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(messages)
                     .toolSpecifications(toolSpecs)
                     .build();
-            ChatResponse chatResponse = reviewChatModel.chat(chatRequest);
+            ChatResponse chatResponse;
+            try {
+                chatResponse = reviewChatModel.chat(chatRequest);
+            } catch (Exception e) {
+                // 兜底防御：正常情况下工具轮次已转为文字历史不会触发该限制；
+                // 若仍出现（供应商行为变化），压缩历史后重试
+                if (!reasoningRepaired && e.getMessage() != null && e.getMessage().contains("reasoning_content")) {
+                    reasoningRepaired = true;
+                    log.warn("[{}] {} 检测到 reasoning_content 回传限制, 压缩工具历史后重试, appId={}", "Workflow", node, appId);
+                    compactToolHistoryForReasoning(messages);
+                    round--;
+                    continue;
+                }
+                throw e;
+            }
             accumulateTokens(appId, chatResponse);
             AiMessage aiMessage = chatResponse.aiMessage();
 
             if (aiMessage.hasToolExecutionRequests()) {
-                messages.add(aiMessage);
+                // 思考模式兼容：供应商要求 tool_calls 助手消息回传 reasoning_content（langchain4j 不保留），
+                // 原生 tool_calls 入历史后下一轮请求必然 400。改以文字形式记录调用与结果，
+                // 历史中不再存在原生 tool_calls 消息，工具结果全量保留不影响模型判断
+                StringBuilder callSummary = new StringBuilder("已执行工具: ");
+                StringBuilder resultSummary = new StringBuilder();
                 for (ToolExecutionRequest toolRequest : aiMessage.toolExecutionRequests()) {
                     log.info("[{}] {} 执行工具: {} (round={})", "Workflow", node, toolRequest.name(), round);
                     String toolResult = executeToolCall(fileTools, toolRequest);
-                    messages.add(ToolExecutionResultMessage.from(toolRequest, toolResult));
+                    callSummary.append(toolRequest.name()).append(" ");
+                    resultSummary.append("【").append(toolRequest.name()).append("】\n").append(toolResult).append("\n\n");
                 }
+                messages.add(AiMessage.from(callSummary.toString().trim()));
+                messages.add(UserMessage.from("工具执行结果:\n" + resultSummary));
             } else if (aiMessage.text() == null || aiMessage.text().isBlank()) {
                 // 模型返回空内容（如仅推理无正文）：原样入队会导致后续请求 content=nil 被服务商拒绝，
                 // 用占位消息保持历史合法，并追问继续任务
@@ -854,6 +861,35 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             }
         }
         return finalText;
+    }
+
+    /**
+     * 思考模式供应商要求 assistant 消息回传 reasoning_content（langchain4j 不保留该字段），
+     * 多轮工具调用历史会触发 400。压缩方案：保留 system 与首条用户需求，
+     * 其余工具调用轮次替换为一条"已执行操作"的提示，让模型基于磁盘现状继续任务。
+     */
+    private void compactToolHistoryForReasoning(List<ChatMessage> messages) {
+        int toolCalls = 0;
+        List<ChatMessage> compacted = new ArrayList<>();
+        ChatMessage firstUser = null;
+        for (ChatMessage m : messages) {
+            if (m instanceof SystemMessage) {
+                compacted.add(m);
+            } else if (m instanceof UserMessage) {
+                if (firstUser == null) {
+                    firstUser = m;
+                }
+            } else if (m instanceof AiMessage && ((AiMessage) m).hasToolExecutionRequests()) {
+                toolCalls += ((AiMessage) m).toolExecutionRequests().size();
+            }
+        }
+        if (firstUser != null) {
+            compacted.add(firstUser);
+        }
+        compacted.add(UserMessage.from(
+                "（历史提示：此前已执行 " + toolCalls + " 次工具调用，所有文件修改均已保存到磁盘。请继续完成任务，直接调用工具。）"));
+        messages.clear();
+        messages.addAll(compacted);
     }
 
     private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, ChatHistory userHistory, Long userId, FluxSink<ServerSentEvent<String>> sink) {
@@ -1194,7 +1230,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /**
      * 增量保存的 Vue 文件直接写在了 rootDir/ 下，需要移到 rootDir/source/ 后执行构建。
      */
-    private void buildIncrementalVueProject(Path rootDir, Long appId, Long userId, Long parentId, FluxSink<ServerSentEvent<String>> sink) {
+    private void buildIncrementalVueProject(Path rootDir, Long appId, Long userId, Long parentId,
+                                            FluxSink<ServerSentEvent<String>> sink, String enhancedPrompt) {
         Path sourceDir = rootDir.resolve("source");
         try {
             Files.createDirectories(sourceDir);
@@ -1210,49 +1247,76 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                             }
                         });
             }
-            // 通知前端：开始构建
-            emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
-            log.info("[Workflow] 增量保存文件已移至 source/, 开始构建, appId={}", appId);
-            projectBuildService.buildVueProject(rootDir, progress -> {
-                log.info("[Workflow] Vue 构建进度: {}, appId={}", progress, appId);
-                if ("npm_build".equals(progress)) {
-                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
-                }
-            });
-            emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "构建完成");
-            saveNodeMessage(appId, userId, parentId, NODE_BUILD, "构建完成");
-        } catch (Exception e) {
-            log.error("[Workflow] Vue 项目构建失败, appId={}", appId, e);
-            throw new RuntimeException("Vue 项目构建失败: " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new RuntimeException("创建 source 目录失败", e);
         }
+        // 构建失败自动修复：构建错误输出尾部注入修复迭代，最多 2 轮。
+        // 注意必须就地消化失败、不得抛出：抛出会触发 langgraph 节点重执行并在节点完成后
+        // 以延迟异常判死工作流，导致自愈成果被丢弃（自愈期间 UI 也无失败反馈）
+        buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, enhancedPrompt, 2, false, "Vue 项目");
+    }
+
+    /**
+     * 执行 Vue 构建并在失败时自动修复：将构建错误输出尾部注入修复迭代提示词，
+     * 让 AI 针对错误做最小化修复后重建。共 maxFixRounds 轮修复机会，仍未成功时
+     * 按 throwOnFail 决定抛出中断工作流或告警继续。
+     */
+    private void buildVueProjectWithSelfHeal(Path rootDir, Long appId, Long userId, Long parentId,
+                                             FluxSink<ServerSentEvent<String>> sink,
+                                             String fixContextPrompt, int maxFixRounds,
+                                             boolean throwOnFail, String reason) {
+        String lastError = null;
+        for (int attempt = 0; attempt <= maxFixRounds; attempt++) {
+            try {
+                emitToolRequest(sink, NODE_BUILD, Map.of("step", attempt == 0 ? "npm_install" : "rebuild"));
+                log.info("[Workflow] {}开始构建(第{}次), appId={}", reason, attempt + 1, appId);
+                projectBuildService.buildVueProject(rootDir, progress -> {
+                    log.info("[Workflow] {}构建进度: {}, appId={}", reason, progress, appId);
+                    if ("npm_install".equals(progress)) {
+                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
+                    } else if ("npm_build".equals(progress)) {
+                        emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
+                    }
+                });
+                emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "构建完成");
+                saveNodeMessage(appId, userId, parentId, NODE_BUILD, "构建完成");
+                log.info("[Workflow] {}构建完成, appId={}", reason, appId);
+                return;
+            } catch (Exception e) {
+                lastError = e.getMessage() == null ? "未知错误" : e.getMessage();
+                emitToolExecuted(sink, NODE_BUILD, Map.of("result", "failed"), "构建失败");
+                saveNodeMessage(appId, userId, parentId, NODE_BUILD, "构建失败，可在对话中继续要求修复");
+                if (attempt >= maxFixRounds) {
+                    log.warn("[Workflow] {}构建失败, 自动修复轮次耗尽, appId={}", reason, appId);
+                    break;
+                }
+                log.warn("[Workflow] {}构建失败, 启动第{}轮自动修复, appId={}", reason, attempt + 1, appId, e);
+                // 构建错误输出注入修复迭代，让 AI 精准定位而非盲改
+                emitToolRequest(sink, NODE_CODE_GEN, Map.of("step", "auto_fix_round_" + (attempt + 1)));
+                String fixPrompt = "项目的 Vue 构建失败，请根据以下构建错误输出定位问题并做最小化修复，"
+                        + "禁止更换框架、构建工具或技术栈：\n\n【构建错误输出（末尾）】\n" + lastError
+                        + "\n\n【原始需求】\n" + (fixContextPrompt == null || fixContextPrompt.isBlank()
+                                ? "（无，请仅针对构建错误修复）" : fixContextPrompt);
+                runCodeGenIteration(rootDir, fixPrompt, appId);
+            }
+        }
+        String message = reason + "构建失败（已自动修复 " + maxFixRounds + " 轮仍未成功）: " + lastError;
+        if (throwOnFail) {
+            throw new RuntimeException(message);
+        }
+        log.warn("[Workflow] {}, 继续流程, appId={}", message, appId);
     }
 
     /**
      * 迭代修改/代码修复后，若存在 source/ 目录（Vue 等需要构建的项目），重新构建使修改生效。
-     * 构建失败仅告警不中断工作流，交由后续节点兜底。
+     * 构建失败自动修复一轮（构建错误输出注入修复迭代），仍未成功则告警继续，由后续节点兜底。
      */
     private void rebuildVueProjectIfSourceExists(Path rootDir, Long appId, Long userId, Long parentId,
                                                  FluxSink<ServerSentEvent<String>> sink, String reason) {
         if (!Files.exists(rootDir.resolve("source"))) {
             return;
         }
-        log.info("[Workflow] 检测到 source/ 目录，{}后开始重新构建, appId={}", reason, appId);
-        emitToolRequest(sink, NODE_BUILD, Map.of("step", "rebuild"));
-        try {
-            projectBuildService.buildVueProject(rootDir, progress -> {
-                log.info("[Workflow] 重新构建进度: {}, appId={}", progress, appId);
-                if ("npm_install".equals(progress)) {
-                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_install"));
-                } else if ("npm_build".equals(progress)) {
-                    emitToolRequest(sink, NODE_BUILD, Map.of("step", "npm_build"));
-                }
-            });
-            emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), reason + "后重新构建完成");
-            saveNodeMessage(appId, userId, parentId, NODE_BUILD, reason + "后重新构建完成");
-            log.info("[Workflow] {}后重新构建完成, appId={}", reason, appId);
-        } catch (Exception e) {
-            log.warn("[Workflow] {}后重新构建失败, 继续流程, appId={}", reason, appId, e);
-        }
+        buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, null, 1, false, reason);
     }
 
     private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent, boolean fileEditMode) {
