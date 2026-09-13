@@ -1,0 +1,69 @@
+# ==================== 本地开发配置（脱敏模板）====================
+# 仓库中提供的是脱敏模板，克隆后请将 your-xxx 占位符替换为真实值再启动。
+# 必填：MySQL / Redis 连接、AI 模型 API Key、auth-service 租户配置、Nacos 地址
+# 选填：阿里云 OSS（应用封面等资源上传）、Pexels / Pixabay（素材获取）、本地 WebDriver
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/codefreex?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: your-mysql-password
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 30000
+      max-lifetime: 1800000
+      connection-timeout: 30000
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: your-redis-password
+      database: 1
+      timeout: 5000
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 3000
+# 认证授权服务（本地开发）：租户对外标识 + RPC 服务间鉴权令牌 + OAuth 回调后重定向的前端地址
+auth-service:
+  tenant-uid: your-tenant-uid
+  rpc-token: your-rpc-token
+  frontend-url: http://localhost:5173
+# Dubbo Nacos 注册中心（本地开发，与本地 auth-service 注册的 Nacos 保持一致）
+dubbo:
+  registry:
+    address: nacos://127.0.0.1:8848
+  metadata-report:
+    address: nacos://127.0.0.1:8848
+
+# ==================== AI 模型配置（本地开发）====================
+# 主生成模型（流式）
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      api-key: your-api-key
+      base-url: https://api.example.com/v1
+      model-name: your-model-name
+# 预审核模型
+ai:
+  review:
+    api-key: your-api-key
+    base-url: https://api.example.com/v1
+    model-name: your-model-name
+
+# 本地开发使用预下载的 WebDriver（绕过 Azure CDN 网络问题）
+app:
+  screenshot:
+    driver-path: ./driver/msedgedriver.exe
+  oss:
+    endpoint: oss-cn-beijing.aliyuncs.com
+    bucket: your-bucket
+    access-key-id: your-access-key-id
+    access-key-secret: your-access-key-secret
+  workflow:
+    image-fetch-enabled: true
+    pexels-api-key: "your-pexels-api-key"
+    pixabay-api-key: "your-pixabay-api-key"
