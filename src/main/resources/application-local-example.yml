@@ -1,5 +1,6 @@
-# ==================== 本地开发配置（脱敏模板）====================
-# 仓库中提供的是脱敏模板，克隆后请将 your-xxx 占位符替换为真实值再启动。
+# ==================== 本地开发配置模板（脱敏）====================
+# 使用方式：复制本文件为 application-local.yml（已被 .gitignore 忽略，不会误提交），
+# 将 your-xxx 占位符替换为真实值后启动。
 # 必填：MySQL / Redis 连接、AI 模型 API Key、auth-service 租户配置、Nacos 地址
 # 选填：阿里云 OSS（应用封面等资源上传）、Pexels / Pixabay（素材获取）、本地 WebDriver
 spring:
