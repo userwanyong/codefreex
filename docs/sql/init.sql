@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS app
     status        VARCHAR(32)  DEFAULT 'draft'       NOT NULL COMMENT '应用状态（draft/generating/generated/deployed/disabled）',
     deploy_key    VARCHAR(64)                        NULL COMMENT '部署标识',
     deployed_time DATETIME                           NULL COMMENT '部署时间',
+    deploy_billed_time DATETIME                       NULL COMMENT '部署计费最近一次扣费时间',
     is_public     TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否公开（0-未公开 1-公开）',
     is_featured   TINYINT   DEFAULT 0                 NOT NULL COMMENT '是否精选（0-否 1-是）',
     priority      INT       DEFAULT 0                 NOT NULL COMMENT '优先级（越高越优先展示）',
@@ -300,3 +301,48 @@ INSERT IGNORE INTO `tag` (`id`, `name`, `sort_order`) VALUES
 (1874593899712872454, '设计', 6),
 (1874593899712872455, 'AI 应用', 7),
 (1874593899712872456, '效率办公', 8);
+
+-- =============================================
+-- 16. 系统配置表
+-- =============================================
+-- AI 服务商密钥、码点计费等运行时可热更配置；初始值（含 yml 中的密钥）由应用启动时自动播种，无需 SQL 种子。
+CREATE TABLE IF NOT EXISTS system_config
+(
+    id           BIGINT                               COMMENT 'id' PRIMARY KEY,
+    config_key   VARCHAR(128)                         NOT NULL COMMENT '配置键（代码内枚举定义）',
+    config_value VARCHAR(2048)                        NULL COMMENT '配置值',
+    remark       VARCHAR(255)                         NULL COMMENT '备注',
+    create_time  DATETIME DEFAULT CURRENT_TIMESTAMP   NOT NULL COMMENT '创建时间',
+    update_time  DATETIME DEFAULT CURRENT_TIMESTAMP   NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete    TINYINT   DEFAULT 0                  NOT NULL COMMENT '是否删除',
+    UNIQUE KEY uk_configKey (config_key, is_delete)
+) COMMENT '系统配置表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 17. 公告表
+-- =============================================
+CREATE TABLE IF NOT EXISTS announcement
+(
+    id           BIGINT                               COMMENT 'id' PRIMARY KEY,
+    title        VARCHAR(128)                         NOT NULL COMMENT '公告标题',
+    content      MEDIUMTEXT                           NULL COMMENT '公告内容（Markdown）',
+    status       VARCHAR(32)  DEFAULT 'draft'         NOT NULL COMMENT '状态（draft-草稿/published-已发布/offline-已下线）',
+    publish_time DATETIME                             NULL COMMENT '发布时间',
+    create_time  DATETIME DEFAULT CURRENT_TIMESTAMP   NOT NULL COMMENT '创建时间',
+    update_time  DATETIME DEFAULT CURRENT_TIMESTAMP   NOT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_delete    TINYINT   DEFAULT 0                  NOT NULL COMMENT '是否删除',
+    INDEX idx_status_publishTime (status, publish_time)
+) COMMENT '公告表' COLLATE = utf8mb4_unicode_ci;
+
+-- =============================================
+-- 18. 公告-用户确认表
+-- =============================================
+CREATE TABLE IF NOT EXISTS announcement_ack
+(
+    id              BIGINT AUTO_INCREMENT COMMENT 'id' PRIMARY KEY,
+    announcement_id BIGINT                             NOT NULL COMMENT '公告id',
+    user_id         BIGINT                             NOT NULL COMMENT '用户id',
+    create_time     DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '确认时间',
+    UNIQUE KEY uk_announcement_user (announcement_id, user_id),
+    INDEX idx_userId (user_id)
+) COMMENT '公告-用户确认表' COLLATE = utf8mb4_unicode_ci;

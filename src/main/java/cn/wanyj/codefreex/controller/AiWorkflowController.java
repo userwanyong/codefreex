@@ -2,7 +2,6 @@ package cn.wanyj.codefreex.controller;
 
 import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
-import cn.wanyj.codefreex.common.AppConstant;
 import cn.wanyj.codefreex.common.BaseResponse;
 import cn.wanyj.codefreex.common.ResultUtils;
 import cn.wanyj.codefreex.exception.BusinessException;
@@ -13,10 +12,12 @@ import cn.wanyj.codefreex.model.dto.response.WorkflowStatusResponse;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.ratelimit.RateLimitException;
 import cn.wanyj.codefreex.service.AiWorkflowService;
 import cn.wanyj.codefreex.service.ConcurrentTaskLimiterService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -62,6 +63,7 @@ public class AiWorkflowController {
     private final CreditTransactionService creditTransactionService;
     private final ChatHistoryMapper chatHistoryMapper;
     private final ConcurrentTaskLimiterService concurrentTaskLimiterService;
+    private final SystemConfigService systemConfigService;
 
     @Operation(summary = "AI对话工作流")
     @PostMapping(value = "/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -80,8 +82,8 @@ public class AiWorkflowController {
         boolean isFirstGenerate = historyCount == 0;
 
         if (!isFirstGenerate) {
-            // 非首次：扣减对话轮次码点
-            int cost = AppConstant.CHAT_ROUND_COST;
+            // 非首次：扣减对话轮次码点（消耗数由系统配置决定）
+            int cost = systemConfigService.getInt(SystemConfigKey.CREDIT_CHAT_ROUND_COST);
             UserInfo userInfo = userInfoService.getUserInfo(userId);
             if (userInfo == null || userInfo.getRemainingCredits() < cost) {
                 throw new BusinessException(ResponseCode.OPERATION_ERROR,

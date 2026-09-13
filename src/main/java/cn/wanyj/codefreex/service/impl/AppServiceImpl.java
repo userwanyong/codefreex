@@ -109,6 +109,7 @@ public class AppServiceImpl implements AppService {
                     .where(APP.ID.eq(app.getId()))
                     .set(APP.STATUS, AppStatus.GENERATED.getValue())
                     .set(APP.DEPLOYED_TIME, null)
+                    .set(APP.DEPLOY_BILLED_TIME, null)
                     .update();
         }
     }

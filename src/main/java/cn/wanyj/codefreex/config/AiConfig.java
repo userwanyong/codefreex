@@ -1,8 +1,9 @@
 package cn.wanyj.codefreex.config;
 
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -17,7 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
- * AI 配置类
+ * AI 配置类：模型连接信息（密钥/地址/模型名等）优先取系统配置（管理端可热更），
+ * yml 属性仅作为首次启动的播种默认值。
  *
  * @author wanyj
  */
@@ -25,35 +27,28 @@ import java.time.Duration;
 public class AiConfig {
 
     /**
-     * 主生成模型 - 流式（多例，解决并发阻塞）
+     * 主生成模型 - 流式（多例，解决并发阻塞）；多例配合系统配置实现每次获取均读取最新配置
      */
     @Bean
     @Scope("prototype")
-    public StreamingChatModel streamingChatModel(AiModelProperties properties) {
+    public StreamingChatModel streamingChatModel(SystemConfigService systemConfigService) {
         return OpenAiStreamingChatModel.builder()
-                .apiKey(properties.getApiKey())
-                .baseUrl(properties.getBaseUrl())
-                .modelName(properties.getModelName())
-                .temperature(properties.getTemperature())
-                .maxTokens(properties.getMaxTokens())
-                .logRequests(properties.isLogRequests())
-                .logResponses(properties.isLogResponses())
+                .apiKey(systemConfigService.getString(SystemConfigKey.AI_MAIN_API_KEY))
+                .baseUrl(systemConfigService.getString(SystemConfigKey.AI_MAIN_BASE_URL))
+                .modelName(systemConfigService.getString(SystemConfigKey.AI_MAIN_MODEL_NAME))
+                .temperature(systemConfigService.getDouble(SystemConfigKey.AI_MAIN_TEMPERATURE))
+                .maxTokens(systemConfigService.getInt(SystemConfigKey.AI_MAIN_MAX_TOKENS))
+                .logRequests(systemConfigService.getBoolean(SystemConfigKey.AI_MAIN_LOG_REQUESTS))
+                .logResponses(systemConfigService.getBoolean(SystemConfigKey.AI_MAIN_LOG_RESPONSES))
                 .build();
     }
 
     /**
-     * 预审核模型 - 同步（低成本、快速响应）
+     * 预审核模型 - 同步（低成本、快速响应）；代理内部按配置指纹重建真实模型，支持热更
      */
     @Bean
-    public ChatModel reviewChatModel(AiReviewProperties properties) {
-        return OpenAiChatModel.builder()
-                .apiKey(properties.getApiKey())
-                .baseUrl(properties.getBaseUrl())
-                .modelName(properties.getModelName())
-                .temperature(properties.getTemperature())
-                .maxTokens(properties.getMaxTokens())
-                .timeout(properties.getTimeout())
-                .build();
+    public ChatModel reviewChatModel(SystemConfigService systemConfigService) {
+        return new ConfigurableChatModel(systemConfigService);
     }
 
     /**

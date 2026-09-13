@@ -115,7 +115,7 @@ public class FeaturedApplicationServiceImpl implements FeaturedApplicationServic
                 ? appMapper.selectOneById(application.getAppId()).getAppName() : "应用";
         String title = approved ? "精选申请已通过" : "精选申请已拒绝";
         String content = approved
-                ? "你的应用「" + appName + "」的精选申请已通过，该应用已被设为精选。"
+                ? "你的应用「" + appName + "」的精选申请已通过，该应用已被设为精选。精选期间该应用的部署不消耗码点。"
                 : "你的应用「" + appName + "」的精选申请已被拒绝。"
                   + (adminRemark != null && !adminRemark.isBlank() ? "管理员备注：" + adminRemark : "你可以修改后重新申请。");
         notificationService.createNotification(application.getUserId(), title, content, "featured_review", applicationId);
@@ -159,7 +159,7 @@ public class FeaturedApplicationServiceImpl implements FeaturedApplicationServic
                     ? appMapper.selectOneById(appId).getAppName() : "应用";
             notificationService.createNotification(approved.getUserId(),
                     "精选已被取消",
-                    "你的应用「" + appName + "」的精选状态已被管理员取消。",
+                    "你的应用「" + appName + "」的精选状态已被管理员取消，部署将恢复按周期计费。",
                     "featured_review", approved.getId());
         }
     }

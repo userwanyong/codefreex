@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS app
     status        VARCHAR(32)  DEFAULT 'draft'       NOT NULL,
     deploy_key    VARCHAR(64)                        NULL,
     deployed_time TIMESTAMP                          NULL,
+    deploy_billed_time TIMESTAMP                    NULL,
     is_public     TINYINT    DEFAULT 0               NOT NULL,
     is_featured   TINYINT    DEFAULT 0               NOT NULL,
     priority      INT        DEFAULT 0               NOT NULL,
@@ -31,6 +32,17 @@ CREATE TABLE IF NOT EXISTS chat_history
     message_type VARCHAR(32)                        NOT NULL,
     app_id       BIGINT                             NOT NULL,
     user_id      BIGINT                             NOT NULL,
+    create_time  TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time  TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    is_delete    TINYINT    DEFAULT 0               NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS system_config
+(
+    id           BIGINT                             PRIMARY KEY,
+    config_key   VARCHAR(128)                       NOT NULL,
+    config_value VARCHAR(2048)                      NULL,
+    remark       VARCHAR(255)                       NULL,
     create_time  TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
     update_time  TIMESTAMP  DEFAULT CURRENT_TIMESTAMP NOT NULL,
     is_delete    TINYINT    DEFAULT 0               NOT NULL
