@@ -2,6 +2,7 @@
   <img src="https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white" alt="Java 21" />
   <img src="https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=spring-boot&logoColor=white" alt="Spring Boot 3.5" />
   <img src="https://img.shields.io/badge/LangChain4j-1.13-FF6B6B?logo=chainlink&logoColor=white" alt="LangChain4j" />
+  <img src="https://img.shields.io/badge/版本-v5.0-blue" alt="v5.0" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
 </p>
 
@@ -188,6 +189,7 @@ src/main/resources/
 ├── prompts/                    # AI Prompt 模板（17 个）
 ├── application.yml             # 主配置（默认激活 local profile）
 ├── application-local-example.yml  # 本地开发配置模板（复制为 application-local.yml 后填写，不入库）
+├── application-prod.yml        # 生产配置模板（Docker 部署激活，具体值由 docker-compose-app.yml 环境变量覆盖）
 └── logback-spring.xml          # 日志配置
 
 local-libs/                     # 未开源依赖（Docker 构建自动引用）
@@ -279,11 +281,24 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local
 
 ### Docker 部署（可选）
 
-使用 `docker-compose-app.yml` 独立部署主应用（两阶段构建，运行镜像内置 Chromium 与 Node.js，支持应用截图和 Vue 项目构建）：
+使用 `docker-compose-app.yml` 独立部署主应用，当前镜像版本 `wanyj/codefreex:5.0`（两阶段构建，运行镜像内置 Chromium 与 Node.js，支持应用截图和 Vue 项目构建）：
 
 ```bash
+# 首次部署先准备数据目录
+mkdir -p ./data/tmp ./data/logs
+chmod -R 777 ./data
+
 docker compose -f docker-compose-app.yml up -d --build
 ```
+
+容器运行激活 `prod` profile（`application-prod.yml` 提供缺省结构），所有具体属性值以环境变量形式直接写在 `docker-compose-app.yml` 中，部署前将文件中的 `your-xxx` 占位符替换为真实值：
+
+- **AI 模型**（必填）— 流式生成与审查模型的 API Key、Base URL、模型名
+- **auth-service 租户配置**（必填）— `tenant-uid`、`rpc-token`、`frontend-url`
+- **基础设施连接** — 默认指向 `docker-compose.yml` 启动的容器（`mysql` / `redis` / `nacos`，密码 `123456`），独立部署时按实际地址修改
+- **OSS / 图库 Key**（可选）— 应用封面上传、素材获取
+
+容器启动后服务监听 `http://localhost:18123/api`，内置健康检查（`/api/actuator/health`）。
 
 ### 监控部署（可选）
 

@@ -1,0 +1,67 @@
+# ==================== 生产环境配置（脱敏模板）====================
+# Docker 部署时激活本 profile（docker-compose-app.yml 中 SPRING_PROFILES_ACTIVE: prod），
+# 具体属性值由 docker-compose-app.yml 以环境变量直接覆盖填写，本文件仅提供缺省结构；
+# your-xxx 均为占位符，禁止提交真实密钥。
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/codefreex?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: your-mysql-password
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 30000
+      max-lifetime: 1800000
+      connection-timeout: 30000
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: your-redis-password
+      database: 1
+      timeout: 5000
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 3000
+# 认证授权服务（生产环境）：租户对外标识 + RPC 服务间鉴权令牌 + OAuth 回调后重定向的前端地址
+auth-service:
+  tenant-uid: your-tenant-uid
+  rpc-token: your-rpc-token
+  frontend-url: http://localhost:5173
+# Dubbo Nacos 注册中心（生产环境，与 auth-service 注册的 Nacos 保持一致）
+dubbo:
+  registry:
+    address: nacos://127.0.0.1:8848
+  metadata-report:
+    address: nacos://127.0.0.1:8848
+
+# ==================== AI 模型配置（生产环境）====================
+# 主生成模型（流式）
+langchain4j:
+  open-ai:
+    streaming-chat-model:
+      api-key: your-api-key
+      base-url: https://api.example.com/v1
+      model-name: your-model-name
+# 预审核模型
+ai:
+  review:
+    api-key: your-api-key
+    base-url: https://api.example.com/v1
+    model-name: your-model-name
+
+# 截图使用容器内 Chromium，浏览器路径由 docker-compose-app.yml 注入，此处无需配置
+app:
+  oss:
+    endpoint: oss-cn-beijing.aliyuncs.com
+    bucket: your-bucket
+    access-key-id: your-access-key-id
+    access-key-secret: your-access-key-secret
+  workflow:
+    image-fetch-enabled: true
+    pexels-api-key: "your-pexels-api-key"
+    pixabay-api-key: "your-pixabay-api-key"

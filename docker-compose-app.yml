@@ -1,65 +1,75 @@
 # CodeFreex 主应用服务独立部署配置
 # 使用方式: docker compose -f docker-compose-app.yml up -d
 # 前提: 基础设施（MySQL、Redis、Nacos）已通过 docker-compose.yml 启动
+# 运行激活 prod profile（src/main/resources/application-prod.yml），
+# 具体属性值直接以环境变量写在本文件中，部署前将 your-xxx 占位符替换为真实值
+# 环境变量命名约定：无横杠属性用 Spring 标准大写形式（属性名 . 替换为 _ 后大写）；
+# 含横杠属性（tenant-uid、metadata-report、api-key 等）的标准大写形式需去掉横杠
+# （如 tenant-uid → TENANTUID），极易写错且失效无报错，故保留属性名原样写法
 # 需要在服务器执行以下两条命令！
 #  mkdir -p ./data/tmp ./data/logs
 #  chmod -R 777 ./data
 
 services:
   codefreex-app:
-    image: wanyj/codefreex:1.0
+    image: registry.cn-wulanchabu.aliyuncs.com/wanyj/codefreex:5.0
     container_name: codefreex-app
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      SPRING_PROFILES_ACTIVE: docker
-      # Database
-      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/codefreex?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME}
-      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
-      # Redis
-      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
-      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
-      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # Nacos
-      dubbo.registry.address: nacos://${NACOS_HOST}:${NACOS_PORT}
-      dubbo.registry.username: ${NACOS_USERNAME}
-      dubbo.registry.password: ${NACOS_PASSWORD}
-      dubbo.metadata-report.address: nacos://${NACOS_HOST}:${NACOS_PORT}
-      dubbo.metadata-report.username: ${NACOS_USERNAME}
-      dubbo.metadata-report.password: ${NACOS_PASSWORD}
-      # AI
-      langchain4j.open-ai.streaming-chat-model.api-key: ${AI_API_KEY}
-      langchain4j.open-ai.streaming-chat-model.base-url: ${AI_API_BASE_URL}
-      langchain4j.open-ai.streaming-chat-model.model-name: ${AI_MODEL_NAME}
-      ai.review.api-key: ${AI_API_KEY}
-      ai.review.base-url: ${AI_API_BASE_URL}
-      ai.review.model-name: ${AI_MODEL_NAME}
-      # Authing
-      authing.app-id: ${AUTHING_APP_ID}
-      authing.app-secret: ${AUTHING_APP_SECRET}
-      authing.app-host: ${AUTHING_APP_HOST}
-      # Auth Service
-      auth-service.tenant-id: ${AUTH_TENANT_ID}
-      # Screenshot（使用容器内 Chromium）
-      app.screenshot.enabled: true
-      app.screenshot.browser: chrome
+      SPRING_PROFILES_ACTIVE: prod
+      # Database（对应 docker-compose.yml 中的 mysql 容器，按实际环境修改）
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/codefreex?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: 123456
+      # Redis（database 1 与 auth-service 隔离）
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: 123456
+      SPRING_DATA_REDIS_DATABASE: "1"
+      # Nacos（registry 无横杠用标准大写；metadata-report 含横杠，保留属性名原样）
+      DUBBO_REGISTRY_ADDRESS: nacos://nacos:8848
+      DUBBO_REGISTRY_USERNAME: nacos
+      DUBBO_REGISTRY_PASSWORD: nacos
+      dubbo.metadata-report.address: nacos://nacos:8848
+      dubbo.metadata-report.username: nacos
+      dubbo.metadata-report.password: nacos
+      # AI 模型（必填，OpenAI 兼容接口，流式生成 / 审查两组共用同一 Key；属性名含横杠，保留原样）
+      langchain4j.open-ai.streaming-chat-model.api-key: your-api-key
+      langchain4j.open-ai.streaming-chat-model.base-url: https://api.example.com/v1
+      langchain4j.open-ai.streaming-chat-model.model-name: your-model-name
+      ai.review.api-key: your-api-key
+      ai.review.base-url: https://api.example.com/v1
+      ai.review.model-name: your-model-name
+      # Auth Service 租户配置（必填，与 auth-service 管理端一致；属性名含横杠，保留原样）
+      auth-service.tenant-uid: your-tenant-uid
+      auth-service.rpc-token: your-rpc-token
+      auth-service.frontend-url: http://localhost:5173
+      # Screenshot（使用容器内 Chromium，无需修改）
+      APP_SCREENSHOT_ENABLED: "true"
+      APP_SCREENSHOT_BROWSER: chrome
       app.screenshot.browser-binary-path: /usr/bin/chromium-browser
       app.screenshot.driver-path: /usr/bin/chromedriver
-      # OSS
-      app.oss.endpoint: ${OSS_ENDPOINT}
-      app.oss.bucket: ${OSS_BUCKET}
-      app.oss.access-key-id: ${OSS_ACCESS_KEY_ID}
-      app.oss.access-key-secret: ${OSS_ACCESS_KEY_SECRET}
-      # Workflow
-      app.workflow.image-fetch-enabled: true
-      app.workflow.pexels-api-key: ${PEXELS_API_KEY}
-      app.workflow.pixabay-api-key: ${PIXABAY_API_KEY}
+      # OSS（可选，应用封面等资源上传）
+      APP_OSS_ENDPOINT: oss-cn-beijing.aliyuncs.com
+      APP_OSS_BUCKET: your-bucket
+      app.oss.access-key-id: your-access-key-id
+      app.oss.access-key-secret: your-access-key-secret
+      # Workflow（图库 Key 可选，素材获取）
+      app.workflow.image-fetch-enabled: "true"
+      app.workflow.pexels-api-key: your-pexels-api-key
+      app.workflow.pixabay-api-key: your-pixabay-api-key
     ports:
-      - "8123:8123"
+      - "18123:18123"
     volumes:
       - ./data/logs:/app/logs
       - ./data/tmp:/app/tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:18123/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
     networks:
       - codefreex-network
 
