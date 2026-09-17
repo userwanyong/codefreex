@@ -9,3 +9,5 @@ docs/
 .gitignore
 docker-compose.yml
 Dockerfile
+# 本地真实配置严禁进入镜像（会被打包进 jar 并随镜像推送到仓库）
+src/main/resources/application-local.yml

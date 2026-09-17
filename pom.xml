@@ -10,7 +10,7 @@
     </parent>
     <groupId>cn.wanyj.codefreex</groupId>
     <artifactId>codefreex</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>5.0</version>
     <name>codefreex</name>
     <description>codefreex</description>
     <properties>
