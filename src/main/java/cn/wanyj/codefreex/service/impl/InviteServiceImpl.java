@@ -12,8 +12,10 @@ import cn.wanyj.codefreex.model.entity.InviteUser;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
 import cn.wanyj.codefreex.model.enums.InviteStatus;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.InviteService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import cn.wanyj.codefreex.service.policy.InviteCreditPolicy;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -47,6 +49,7 @@ public class InviteServiceImpl implements InviteService {
     @Lazy
     private final UserInfoService userInfoService;
     private final CreditTransactionService creditTransactionService;
+    private final SystemConfigService systemConfigService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -83,7 +86,8 @@ public class InviteServiceImpl implements InviteService {
         inviteMapper.insert(invite);
 
         if (!isAdmin) {
-            int cost = InviteCreditPolicy.calculateCreateCost(finalMaxUseCount);
+            int cost = InviteCreditPolicy.calculateCreateCost(finalMaxUseCount,
+                    systemConfigService.getInt(SystemConfigKey.CREDIT_INVITE_CREATE_COST_PER_USE));
             int balanceAfter = userInfoService.deductCredits(userId, cost);
             creditTransactionService.recordTransaction(
                     userId,
@@ -251,11 +255,12 @@ public class InviteServiceImpl implements InviteService {
         if (userInfoService.getUserInfo(inviterId) == null) {
             userInfoService.createUserInfo(inviterId, null);
         }
-        int balanceAfter = userInfoService.addCredits(inviterId, InviteCreditPolicy.INVITE_REWARD_CREDITS);
+        int rewardCredits = systemConfigService.getInt(SystemConfigKey.CREDIT_INVITE_REWARD);
+        int balanceAfter = userInfoService.addCredits(inviterId, rewardCredits);
         creditTransactionService.recordTransaction(
                 inviterId,
                 CreditTransactionType.GIFT,
-                InviteCreditPolicy.INVITE_REWARD_CREDITS,
+                rewardCredits,
                 balanceAfter,
                 CreditSourceType.INVITE,
                 invite.getId(),

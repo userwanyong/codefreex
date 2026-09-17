@@ -2,7 +2,6 @@ package cn.wanyj.codefreex.controller;
 
 import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
-import cn.wanyj.codefreex.common.AppConstant;
 import cn.wanyj.codefreex.common.BaseResponse;
 import cn.wanyj.codefreex.common.PageResponse;
 import cn.wanyj.codefreex.common.ResultUtils;
@@ -16,11 +15,13 @@ import cn.wanyj.codefreex.model.entity.App;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.model.entity.FeaturedApplication;
 import cn.wanyj.codefreex.service.AppService;
 import cn.wanyj.codefreex.service.ConcurrentTaskLimiterService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
 import cn.wanyj.codefreex.service.FeaturedApplicationService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -46,6 +47,7 @@ public class AppController {
     private final CreditTransactionService creditTransactionService;
     private final FeaturedApplicationService featuredApplicationService;
     private final ConcurrentTaskLimiterService concurrentTaskLimiterService;
+    private final SystemConfigService systemConfigService;
 
     @Operation(summary = "创建应用")
     @PostMapping("/create")
@@ -61,21 +63,22 @@ public class AppController {
         }
 
         try {
-            // 检查码点余额（首次生成需要 FIRST_GENERATE_COST 码点）
+            // 检查码点余额（首次生成消耗码点数由系统配置决定）
+            int firstGenerateCost = systemConfigService.getInt(SystemConfigKey.CREDIT_FIRST_GENERATE_COST);
             UserInfo userInfo = userInfoService.getUserInfo(userId);
-            if (userInfo == null || userInfo.getRemainingCredits() < AppConstant.FIRST_GENERATE_COST) {
+            if (userInfo == null || userInfo.getRemainingCredits() < firstGenerateCost) {
                 throw new BusinessException(ResponseCode.OPERATION_ERROR,
-                        "码点不足，需要 " + AppConstant.FIRST_GENERATE_COST + " 码点才能创建应用，请先兑换码点");
+                        "码点不足，需要 " + firstGenerateCost + " 码点才能创建应用，请先兑换码点");
             }
 
             // 扣减码点
-            int balanceAfter = userInfoService.deductCredits(userId, AppConstant.FIRST_GENERATE_COST);
+            int balanceAfter = userInfoService.deductCredits(userId, firstGenerateCost);
 
             // 记录码点流水
             creditTransactionService.recordTransaction(
                     userId,
                     CreditTransactionType.CONSUME,
-                    -AppConstant.FIRST_GENERATE_COST,
+                    -firstGenerateCost,
                     balanceAfter,
                     CreditSourceType.AI_CHAT,
                     null,

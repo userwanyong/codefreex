@@ -2,7 +2,6 @@ package cn.wanyj.codefreex.controller;
 
 import cn.wanyj.codefreex.auth.UserContext;
 import cn.wanyj.codefreex.auth.annotation.AuthCheck;
-import cn.wanyj.codefreex.common.AppConstant;
 import cn.wanyj.codefreex.common.BaseResponse;
 import cn.wanyj.codefreex.common.ResultUtils;
 import cn.wanyj.codefreex.exception.BusinessException;
@@ -13,8 +12,10 @@ import cn.wanyj.codefreex.model.dto.response.PromptReviewResult;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.service.AiGenService;
 import cn.wanyj.codefreex.service.CreditTransactionService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.query.QueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -43,6 +44,7 @@ public class AiController {
     private final UserInfoService userInfoService;
     private final CreditTransactionService creditTransactionService;
     private final ChatHistoryMapper chatHistoryMapper;
+    private final SystemConfigService systemConfigService;
 
     @Operation(summary = "AI 对话生成代码（SSE 流式）")
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -61,7 +63,7 @@ public class AiController {
         boolean isFirstGenerate = historyCount == 0;
 
         if (!isFirstGenerate) {
-            int cost = AppConstant.CHAT_ROUND_COST;
+            int cost = systemConfigService.getInt(SystemConfigKey.CREDIT_CHAT_ROUND_COST);
             UserInfo userInfo = userInfoService.getUserInfo(userId);
             if (userInfo == null || userInfo.getRemainingCredits() < cost) {
                 throw new BusinessException(ResponseCode.OPERATION_ERROR,

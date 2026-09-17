@@ -4,6 +4,7 @@ import cn.wanyj.codefreex.config.AiConfig;
 import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.model.dto.response.WorkflowImageAsset;
 import cn.wanyj.codefreex.service.OssService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatModel;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,8 @@ class WorkflowImageServiceImplTest {
         ChatModel chatModel = mock(ChatModel.class);
         AiConfig.PromptLoader promptLoader = mock(AiConfig.PromptLoader.class);
         ObjectMapper objectMapper = new ObjectMapper();
-        return new WorkflowImageServiceImpl(properties, ossService, chatModel, promptLoader, objectMapper);
+        SystemConfigService systemConfigService = mock(SystemConfigService.class);
+        return new WorkflowImageServiceImpl(properties, ossService, chatModel, promptLoader, objectMapper, systemConfigService);
     }
 
     @Test

@@ -38,6 +38,11 @@ public class App {
 
     private LocalDateTime deployedTime;
 
+    /**
+     * 部署计费最近一次扣费时间（用于按周期扣减部署码点）
+     */
+    private LocalDateTime deployBilledTime;
+
     private Integer isPublic;
 
     private Integer isFeatured;

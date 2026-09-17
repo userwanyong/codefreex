@@ -3,7 +3,9 @@ package cn.wanyj.codefreex.service.impl;
 import cn.wanyj.codefreex.config.AiConfig;
 import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.model.dto.response.WorkflowImageAsset;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.service.OssService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.WorkflowImageService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,17 +38,20 @@ public class WorkflowImageServiceImpl implements WorkflowImageService {
     private final ChatModel reviewChatModel;
     private final AiConfig.PromptLoader promptLoader;
     private final ObjectMapper objectMapper;
+    private final SystemConfigService systemConfigService;
 
     public WorkflowImageServiceImpl(AppRuntimeConfig.WorkflowProperties workflowProperties,
                                     OssService ossService,
                                     @Qualifier("reviewChatModel") ChatModel reviewChatModel,
                                     AiConfig.PromptLoader promptLoader,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    SystemConfigService systemConfigService) {
         this.workflowProperties = workflowProperties;
         this.ossService = ossService;
         this.reviewChatModel = reviewChatModel;
         this.promptLoader = promptLoader;
         this.objectMapper = objectMapper;
+        this.systemConfigService = systemConfigService;
     }
 
     @Override
@@ -84,7 +89,7 @@ public class WorkflowImageServiceImpl implements WorkflowImageService {
     }
 
     private WorkflowImageAsset fetchContentImage(String keyword) {
-        String apiKey = workflowProperties.getPexelsApiKey();
+        String apiKey = systemConfigService.getString(SystemConfigKey.AI_GALLERY_PEXELS_API_KEY);
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Pexels API key 未配置");
         }
@@ -120,7 +125,7 @@ public class WorkflowImageServiceImpl implements WorkflowImageService {
     }
 
     private WorkflowImageAsset fetchIllustrationImage(String keyword) {
-        String apiKey = workflowProperties.getPixabayApiKey();
+        String apiKey = systemConfigService.getString(SystemConfigKey.AI_GALLERY_PIXABAY_API_KEY);
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Pixabay API key 未配置");
         }
@@ -186,7 +191,8 @@ public class WorkflowImageServiceImpl implements WorkflowImageService {
                 description != null ? description : "简约通用Logo，品牌名称: " + keyword);
 
         ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
-        String svgCode = extractSvg(response.aiMessage().text().trim());
+        String aiText = response.aiMessage().text();
+        String svgCode = extractSvg(aiText == null ? "" : aiText.trim());
 
         if (svgCode.isBlank() || !svgCode.startsWith("<svg")) {
             throw new RuntimeException("AI 未返回有效的 SVG");

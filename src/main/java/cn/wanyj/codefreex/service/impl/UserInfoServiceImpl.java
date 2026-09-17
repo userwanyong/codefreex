@@ -6,9 +6,10 @@ import cn.wanyj.codefreex.mapper.UserInfoMapper;
 import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.CreditSourceType;
 import cn.wanyj.codefreex.model.enums.CreditTransactionType;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.service.CreditTransactionService;
+import cn.wanyj.codefreex.service.SystemConfigService;
 import cn.wanyj.codefreex.service.UserInfoService;
-import cn.wanyj.codefreex.service.policy.InviteCreditPolicy;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class UserInfoServiceImpl implements UserInfoService {
     private final UserInfoMapper userInfoMapper;
     @Lazy
     private final CreditTransactionService creditTransactionService;
+    private final SystemConfigService systemConfigService;
 
     @Override
     public UserInfo getUserInfo(Long userId) {
@@ -52,7 +54,8 @@ public class UserInfoServiceImpl implements UserInfoService {
         if (existing != null) {
             return existing;
         }
-        int initialCredits = inviterId != null ? InviteCreditPolicy.INVITE_REWARD_CREDITS : 0;
+        int initialCredits = inviterId != null
+                ? systemConfigService.getInt(SystemConfigKey.CREDIT_INVITE_REWARD) : 0;
         UserInfo userInfo = new UserInfo();
         userInfo.setUserId(userId);
         userInfo.setInviterId(inviterId);

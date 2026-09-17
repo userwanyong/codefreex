@@ -16,7 +16,8 @@ public enum CreditSourceType {
     AI_CHAT("ai_chat", "AI对话"),
     INVITE("invite", "邀请码"),
     ADMIN("admin", "管理员操作"),
-    REGISTER_GIFT("register_gift", "注册赠送");
+    REGISTER_GIFT("register_gift", "注册赠送"),
+    DEPLOY("deploy", "应用部署");
 
     private final String value;
     private final String desc;

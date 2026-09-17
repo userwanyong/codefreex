@@ -5,11 +5,16 @@ import cn.wanyj.codefreex.exception.ResponseCode;
 import cn.wanyj.codefreex.mapper.AppMapper;
 import cn.wanyj.codefreex.model.dto.response.AppDeployResponse;
 import cn.wanyj.codefreex.model.entity.App;
+import cn.wanyj.codefreex.model.entity.UserInfo;
 import cn.wanyj.codefreex.model.enums.AppStatus;
+import cn.wanyj.codefreex.model.enums.SystemConfigKey;
 import cn.wanyj.codefreex.service.AppCoverService;
 import cn.wanyj.codefreex.service.AppDeployService;
 import cn.wanyj.codefreex.service.AppNginxService;
 import cn.wanyj.codefreex.service.AppStorageService;
+import cn.wanyj.codefreex.service.AiWorkflowService;
+import cn.wanyj.codefreex.service.SystemConfigService;
+import cn.wanyj.codefreex.service.UserInfoService;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -32,6 +37,9 @@ public class AppDeployServiceImpl implements AppDeployService {
     private final AppStorageService appStorageService;
     private final AppCoverService appCoverService;
     private final AppNginxService appNginxService;
+    private final AiWorkflowService aiWorkflowService;
+    private final UserInfoService userInfoService;
+    private final SystemConfigService systemConfigService;
 
     @Override
     public AppDeployResponse deployApp(Long userId, Long appId) {
@@ -39,6 +47,21 @@ public class AppDeployServiceImpl implements AppDeployService {
         String status = app.getStatus();
         if (!AppStatus.GENERATED.getValue().equals(status) && !AppStatus.DEPLOYED.getValue().equals(status)) {
             throw new BusinessException(ResponseCode.PARAMS_ERROR, "仅已生成或已部署应用可部署");
+        }
+        // 工作流正在修改代码时禁止部署，避免把改到一半的代码快照上线
+        String workflowStatus = aiWorkflowService.getStatus(appId).getStatus();
+        if ("running".equals(workflowStatus)) {
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "AI 正在修改该应用，请等待工作流完成后再部署");
+        }
+        // 部署按周期计费：余额不足以支付一个计费周期时拒绝部署（精选应用部署期间免费）
+        int hourlyCost = systemConfigService.getInt(SystemConfigKey.CREDIT_DEPLOY_HOURLY_COST);
+        boolean featured = app.getIsFeatured() != null && app.getIsFeatured() == 1;
+        if (hourlyCost > 0 && !featured) {
+            UserInfo userInfo = userInfoService.getUserInfo(userId);
+            if (userInfo == null || userInfo.getRemainingCredits() < hourlyCost) {
+                throw new BusinessException(ResponseCode.OPERATION_ERROR,
+                        "码点不足，部署应用每个计费周期消耗 " + hourlyCost + " 码点，请先兑换码点");
+            }
         }
         if (app.getIsPublic() == null || app.getIsPublic() != 1) {
             // 未公开的应用，部署时自动设为公开
@@ -55,6 +78,7 @@ public class AppDeployServiceImpl implements AppDeployService {
                 .where(APP.ID.eq(appId))
                 .set(APP.STATUS, AppStatus.DEPLOYED.getValue())
                 .set(APP.DEPLOYED_TIME, deployedTime)
+                .set(APP.DEPLOY_BILLED_TIME, deployedTime)
                 .update();
 
         appCoverService.generateCoverAsync(appId, app.getDeployKey(), app.getAppName(), app.getDescription());
@@ -80,6 +104,7 @@ public class AppDeployServiceImpl implements AppDeployService {
                 .where(APP.ID.eq(appId))
                 .set(APP.STATUS, AppStatus.GENERATED.getValue())
                 .set(APP.DEPLOYED_TIME, null)
+                .set(APP.DEPLOY_BILLED_TIME, null)
                 .update();
     }
 
