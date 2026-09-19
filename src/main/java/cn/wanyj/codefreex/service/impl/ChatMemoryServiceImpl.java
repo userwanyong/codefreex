@@ -49,6 +49,11 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
         String memoryId = buildMemoryId(appId, userId);
         ChatMemory cachedMemory = localMemoryCache.getIfPresent(memoryId);
         if (cachedMemory != null) {
+            // 同一应用的记忆被多个流程（代码生成/可视化编辑/普通对话）按不同 system prompt 复用，
+            // 缓存命中时必须同步为调用方本次的 system prompt，否则普通对话会沿用代码生成的系统提示词，被引导输出完整代码文件而非对话回复
+            if (cachedMemory instanceof PersistentChatMemory persistentMemory) {
+                persistentMemory.updateSystemPrompt(systemPrompt);
+            }
             return cachedMemory;
         }
 
@@ -144,7 +149,7 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
     private static class PersistentChatMemory implements ChatMemory {
 
         private final String id;
-        private final String systemPrompt;
+        private String systemPrompt;
         private final MemoryPersistence persistence;
         private final List<MemoryMessage> persistedMessages;
 
@@ -153,6 +158,14 @@ public class ChatMemoryServiceImpl implements ChatMemoryService {
             this.systemPrompt = systemPrompt;
             this.persistence = persistence;
             this.persistedMessages = new ArrayList<>(messages);
+        }
+
+        /** 将 system prompt 更新为调用方本次使用的版本（仅消息历史跨流程共享，system prompt 不共享） */
+        synchronized void updateSystemPrompt(String newSystemPrompt) {
+            if (newSystemPrompt != null && !newSystemPrompt.isBlank()
+                    && !newSystemPrompt.equals(this.systemPrompt)) {
+                this.systemPrompt = newSystemPrompt;
+            }
         }
 
         @Override

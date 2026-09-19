@@ -114,7 +114,9 @@ public class AiWorkflowController {
         }
 
         // === 开始工作流 ===
-        SseEmitter emitter = new SseEmitter(900_000L);
+        // 推理型模型的工具循环单轮可达数分钟，编辑类任务整体耗时可能超过 15 分钟，
+        // SSE 连接需覆盖工作流全程（前端断连后仅剩缓存回放，实时进度丢失）
+        SseEmitter emitter = new SseEmitter(1_800_000L);
         AtomicBoolean emitterCompleted = new AtomicBoolean(false);
 
         emitter.onTimeout(() -> {

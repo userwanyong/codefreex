@@ -85,6 +85,11 @@ const router = createRouter({
 }
 
 
+4）index.html 必须在 </body> 前包含 Vite 入口标签，缺失会导致 vite build 不打包任何代码、页面白屏：
+
+<script type="module" src="/src/main.js"></script>
+
+
 ## 网站内容要求
 
 - 基础布局：各个页面统一布局，必须有导航栏，尤其是主页内容必须丰富
@@ -94,33 +99,34 @@ const router = createRouter({
 
 ## 严格输出约束
 
-1）输出格式：必须使用以下格式，每个文件一个代码块，文件名写在 file: 后面：
+1）输出格式：必须使用以下格式，每个文件一个代码块，开始围栏是四个反引号，文件名写在 file: 后面：
 
-```file:index.html
+````file:index.html
 <!DOCTYPE html>
 <html>...完整的 HTML 代码...</html>
-```
+````
 
-```file:package.json
+````file:package.json
 {...完整的 package.json 内容...}
-```
+````
 
-```file:vite.config.js
+````file:vite.config.js
 ...完整的 Vite 配置代码...
-```
+````
 
-```file:src/main.js
+````file:src/main.js
 ...完整的应用入口代码...
-```
+````
 
-```file:src/App.vue
+````file:src/App.vue
 ...完整的根组件代码...
-```
+````
 
 （其他文件以此类推）
 
 2）特别注意：
-- 每个代码块必须以 ```file:文件名 开头，这是系统解析文件的唯一方式，不要用其他格式
+- 每个代码块必须以 ````file:文件名 开头（四个反引号），并以四个反引号独占一行结尾，这是系统解析文件的唯一方式，不要用其他格式
+- 文件内容中可以正常包含三个反引号组成的代码块（如 Markdown 文章内容），它们不会被误认为块结束；但内容中严禁出现四个连续的反引号
 - 每种文件只能输出一个代码块，且必须包含完整代码
 - 必须输出所有必要的文件，确保项目完整可运行
 - 不要在代码块之外输出任何代码片段

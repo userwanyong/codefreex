@@ -49,7 +49,34 @@ public class ProjectBuildServiceImpl implements ProjectBuildService {
             writeFallbackPreview(generatedRootDir);
             return;
         }
+        validateDistOutput(distDir);
         mirrorDirectory(distDir, generatedRootDir);
+    }
+
+    /**
+     * 构建产物有效性校验：Vite 以 index.html 为打包入口，若源 index.html 未声明
+     * module script 入口标签，vite build 不报错但产物是空壳（dist 中没有任何 JS），
+     * 预览必然白屏。此处将空壳产物判定为构建失败，交给自动修复循环补齐入口标签。
+     */
+    private void validateDistOutput(Path distDir) {
+        boolean hasJs;
+        try (var stream = Files.walk(distDir)) {
+            hasJs = stream.filter(Files::isRegularFile)
+                    .anyMatch(path -> {
+                        String name = path.getFileName().toString().toLowerCase();
+                        return name.endsWith(".js") || name.endsWith(".mjs");
+                    });
+        } catch (IOException e) {
+            throw new RuntimeException("读取构建产物目录失败: " + e.getMessage(), e);
+        }
+        if (!hasJs) {
+            throw new RuntimeException("""
+                    构建产物校验失败: dist 目录中没有任何 JS 文件，vite build 未打包任何代码，页面将白屏。\
+                    通常原因是 index.html 缺少 Vite 入口标签\
+                    <script type="module" src="/src/main.js"></script>（缺少该标签时 vite build 不报错、退出码为 0）。\
+                    请检查 index.html，在 body 末尾补齐入口标签（src 路径与实际的入口文件一致），不要改动其他文件。\
+                    如入口文件名不是 src/main.js，以项目实际入口为准。""");
+        }
     }
 
     private void writeFallbackPreview(Path generatedRootDir) {
