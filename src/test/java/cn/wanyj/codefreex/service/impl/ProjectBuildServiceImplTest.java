@@ -45,14 +45,41 @@ class ProjectBuildServiceImplTest {
 
         Path generatedRoot = tempDir.resolve("generated2");
         Path distDir = generatedRoot.resolve("source").resolve("dist");
-        Files.createDirectories(distDir);
+        Files.createDirectories(distDir.resolve("assets"));
         Files.writeString(distDir.resolve("index.html"), "<html>dist</html>");
+        Files.writeString(distDir.resolve("assets").resolve("index-abc123.js"), "console.log(1)");
 
         service.buildVueProject(generatedRoot, progress -> {
         });
 
         assertThat(Files.readString(generatedRoot.resolve("index.html"))).contains("dist");
+        assertThat(generatedRoot.resolve("assets").resolve("index-abc123.js")).exists();
         verify(commandExecutor, times(2))
                 .execute(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.eq(generatedRoot.resolve("source")));
+    }
+
+    @Test
+    void buildVueProject_whenDistHasNoJs_failsWithEntryHint() throws Exception {
+        // 空壳产物：index.html 未声明 module 入口时 vite build 不报错，
+        // dist 只有 html（可能还有 favicon 等非 JS 资源），必须判定为构建失败
+        CommandExecutor commandExecutor = mock(CommandExecutor.class);
+        doNothing().when(commandExecutor).execute(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any());
+        AppRuntimeConfig.WorkflowProperties properties = new AppRuntimeConfig.WorkflowProperties();
+        properties.setVueBuildEnabled(true);
+        ProjectBuildServiceImpl service = new ProjectBuildServiceImpl(commandExecutor, properties);
+
+        Path generatedRoot = tempDir.resolve("generated3");
+        Path distDir = generatedRoot.resolve("source").resolve("dist");
+        Files.createDirectories(distDir);
+        Files.writeString(distDir.resolve("index.html"), "<html><div id=\"app\"></div></html>");
+        Files.writeString(distDir.resolve("favicon.ico"), "fake-icon");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.buildVueProject(generatedRoot, progress -> {
+                }))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("构建产物校验失败")
+                .hasMessageContaining("入口标签");
+        // 校验失败时不得把空壳产物镜像到预览目录
+        assertThat(generatedRoot.resolve("index.html")).doesNotExist();
     }
 }
