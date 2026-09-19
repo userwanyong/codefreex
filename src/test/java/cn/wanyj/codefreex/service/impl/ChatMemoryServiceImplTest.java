@@ -116,6 +116,35 @@ class ChatMemoryServiceImplTest {
         verify(chatHistoryService, times(1)).listRecentMessages(appId, userId, 20);
     }
 
+    // ========== 跨流程复用：system prompt 随调用方更新 ==========
+
+    @Test
+    void getChatMemory_cachedMemory_updatesSystemPromptFromLatestCaller() {
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(chatHistoryService.listRecentMessages(appId, userId, 20)).thenReturn(List.of());
+
+        // 代码生成流程先以代码生成的 system prompt 创建记忆
+        ChatMemory codeGenMemory = chatMemoryService.getChatMemory(appId, userId, "code gen system prompt");
+        assertThat(((SystemMessage) codeGenMemory.messages().get(0)).text()).isEqualTo("code gen system prompt");
+
+        // 普通对话流程复用同一记忆，但传入自己的 system prompt
+        ChatMemory chatMemory = chatMemoryService.getChatMemory(appId, userId, "chat system prompt");
+
+        // system 消息应为最新调用方的 prompt，而非首次创建时遗留的
+        assertThat(((SystemMessage) chatMemory.messages().get(0)).text()).isEqualTo("chat system prompt");
+    }
+
+    @Test
+    void getChatMemory_cachedMemory_ignoresBlankSystemPrompt() {
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(chatHistoryService.listRecentMessages(appId, userId, 20)).thenReturn(List.of());
+
+        ChatMemory memory = chatMemoryService.getChatMemory(appId, userId, systemPrompt);
+        ChatMemory reused = chatMemoryService.getChatMemory(appId, userId, "  ");
+
+        assertThat(((SystemMessage) reused.messages().get(0)).text()).isEqualTo(systemPrompt);
+    }
+
     // ========== clearChatMemory ==========
 
     @Test

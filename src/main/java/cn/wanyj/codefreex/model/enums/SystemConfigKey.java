@@ -36,8 +36,8 @@ public enum SystemConfigKey {
     AI_REVIEW_TEMPERATURE("ai.review.temperature", "ai", "AI 模型配置", "预审核模型温度", ValueType.DOUBLE, "0.3", false, null),
     AI_REVIEW_MAX_TOKENS("ai.review.max-tokens", "ai", "AI 模型配置", "预审核模型最大输出 Token", ValueType.INT, "2048", false,
             "承担工具调用循环时不宜过小，避免输出前被截断"),
-    AI_REVIEW_TIMEOUT_SECONDS("ai.review.timeout-seconds", "ai", "AI 模型配置", "预审核模型超时（秒）", ValueType.INT, "300", false,
-            "推理型模型长推理单次调用可超过 60s"),
+    AI_REVIEW_TIMEOUT_SECONDS("ai.review.timeout-seconds", "ai", "AI 模型配置", "预审核模型超时（秒）", ValueType.INT, "600", false,
+            "推理型模型大上下文工具循环单次调用可超过 300s，过短会频繁超时重试"),
 
     // ================= AI 图库服务 =================
     AI_GALLERY_PEXELS_API_KEY("ai.gallery.pexels-api-key", "ai", "AI 模型配置", "Pexels 图库 API Key", ValueType.STRING, "", true,
