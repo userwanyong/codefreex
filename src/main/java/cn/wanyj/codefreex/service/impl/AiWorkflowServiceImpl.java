@@ -32,6 +32,8 @@ import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.*;
+import org.bsc.langgraph4j.action.AsyncNodeAction;
+import org.bsc.langgraph4j.action.AsyncNodeActionWithConfig;
 import org.bsc.langgraph4j.checkpoint.MemorySaver;
 import org.bsc.langgraph4j.state.AgentState;
 import org.bsc.langgraph4j.state.Channel;
@@ -59,6 +61,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -184,7 +187,10 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 userHistory = chatHistoryService.saveUserMessage(appId, userId, message);
                 updateStatus(appId, "running", NODE_PROMPT_GUARD, app.getCodeGenType(), 0, "workflow started");
 
-                CompiledGraph<WorkflowGraphState> graph = buildWorkflowGraph(appId, userId, app, message, userHistory, sink);
+                // 节点失败捕获：guardNode 将节点异常记录于此（不向 langgraph4j 抛出，
+                // 规避其阻塞迭代桥接对失败节点的静默重复执行），主循环检测到后立即终止工作流
+                AtomicReference<Throwable> nodeFailure = new AtomicReference<>();
+                CompiledGraph<WorkflowGraphState> graph = buildWorkflowGraph(appId, userId, app, message, userHistory, sink, nodeFailure);
                 graph.setMaxIterations(25);
 
                 String threadId = "workflow-" + appId + "-" + System.nanoTime();
@@ -200,6 +206,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                             finalState.route(),
                             finalState.retryCount(),
                             finalState.statusMessage());
+                    Throwable nodeError = nodeFailure.get();
+                    if (nodeError != null) {
+                        throw new RuntimeException("工作流节点执行失败(" + output.node() + "): "
+                                + nodeError.getMessage(), nodeError);
+                    }
                 }
 
                 if (finalState == null) {
@@ -309,25 +320,50 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         return response;
     }
 
+    /**
+     * 节点动作守卫：将节点异常记录到 nodeFailure 并返回空状态更新，而非向生成器抛出。
+     *
+     * 背景：langgraph4j 的阻塞迭代桥接（InternalIterator 预取 + Data.error 语义）在节点异常后
+     * 会再次调用 next()，导致失败节点被静默重新执行一遍（文件被重复编辑、token 重复计费、
+     * 故障时间翻倍），且重复执行期间前端无任何事件，表现为工作流长时间卡在"编写代码"。
+     * 借助本守卫，节点异常统一由 generate() 主循环检测并走正常失败清理链
+     * （状态置 failed、恢复应用状态、向前端推送 error/done、释放资源）。
+     */
+    static AsyncNodeActionWithConfig<WorkflowGraphState> guardNode(
+            AsyncNodeAction<WorkflowGraphState> action, AtomicReference<Throwable> nodeFailure) {
+        return (state, config) -> {
+            try {
+                return action.apply(state).exceptionally(t -> {
+                    nodeFailure.compareAndSet(null, t);
+                    return Map.of();
+                });
+            } catch (Throwable t) {
+                nodeFailure.compareAndSet(null, t);
+                return CompletableFuture.completedFuture(Map.of());
+            }
+        };
+    }
+
     private CompiledGraph<WorkflowGraphState> buildWorkflowGraph(Long appId, Long userId, App app, String message,
                                                                  ChatHistory userHistory,
-                                                                 FluxSink<ServerSentEvent<String>> sink) throws Exception {
+                                                                 FluxSink<ServerSentEvent<String>> sink,
+                                                                 AtomicReference<Throwable> nodeFailure) throws Exception {
         StateGraph<WorkflowGraphState> graph = new StateGraph<>(WORKFLOW_SCHEMA, WorkflowGraphState::new);
 
-        graph.addNode(NODE_PROMPT_GUARD, state -> CompletableFuture.completedFuture(runPromptGuardNode(state, message, sink)));
-        graph.addNode(NODE_PROMPT_REVIEW, state -> CompletableFuture.completedFuture(runPromptReviewNode(state, message, userHistory, userId, sink)));
-        graph.addNode(NODE_PRD_GEN, state -> CompletableFuture.completedFuture(runPrdGenNode(state, app, message, userHistory, userId, sink)));
-        graph.addNode(NODE_IMAGE_PLAN, state -> CompletableFuture.completedFuture(runImagePlanNode(state, message, userHistory, userId, sink)));
-        graph.addNode(NODE_IMAGE_FETCH, state -> CompletableFuture.completedFuture(runImageFetchNode(state, message, userHistory, userId, sink)));
-        graph.addNode(NODE_PROMPT_ENHANCE, state -> CompletableFuture.completedFuture(runPromptEnhanceNode(state, app, message, userHistory, userId, sink)));
-        graph.addNode(NODE_ROUTE, state -> CompletableFuture.completedFuture(runRouteNode(state, app, message, userHistory, userId, sink)));
-        graph.addNode(NODE_CODE_GEN, state -> CompletableFuture.completedFuture(runCodeGenNode(state, app, userId, userHistory, sink)));
-        graph.addNode(NODE_QUALITY_CHECK, state -> CompletableFuture.completedFuture(runQualityCheckNode(state, userHistory, userId, sink)));
-        graph.addNode(NODE_CODE_FIX, state -> CompletableFuture.completedFuture(runCodeFixNode(state, app, userId, userHistory, sink)));
-        graph.addNode(NODE_INTENT_CLASSIFY, state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)));
-        graph.addNode(NODE_CHAT_DIRECT, state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)));
-        graph.addNode(NODE_VISUAL_EDIT, state -> CompletableFuture.completedFuture(runVisualEditNode(state, app, userId, message, userHistory, sink)));
-        graph.addNode(NODE_FAIL, state -> CompletableFuture.completedFuture(runFailNode(state, sink)));
+        graph.addNode(NODE_PROMPT_GUARD, guardNode(state -> CompletableFuture.completedFuture(runPromptGuardNode(state, message, sink)), nodeFailure));
+        graph.addNode(NODE_PROMPT_REVIEW, guardNode(state -> CompletableFuture.completedFuture(runPromptReviewNode(state, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_PRD_GEN, guardNode(state -> CompletableFuture.completedFuture(runPrdGenNode(state, app, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_IMAGE_PLAN, guardNode(state -> CompletableFuture.completedFuture(runImagePlanNode(state, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_IMAGE_FETCH, guardNode(state -> CompletableFuture.completedFuture(runImageFetchNode(state, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_PROMPT_ENHANCE, guardNode(state -> CompletableFuture.completedFuture(runPromptEnhanceNode(state, app, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_ROUTE, guardNode(state -> CompletableFuture.completedFuture(runRouteNode(state, app, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_CODE_GEN, guardNode(state -> CompletableFuture.completedFuture(runCodeGenNode(state, app, userId, userHistory, sink)), nodeFailure));
+        graph.addNode(NODE_QUALITY_CHECK, guardNode(state -> CompletableFuture.completedFuture(runQualityCheckNode(state, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_CODE_FIX, guardNode(state -> CompletableFuture.completedFuture(runCodeFixNode(state, app, userId, userHistory, sink)), nodeFailure));
+        graph.addNode(NODE_INTENT_CLASSIFY, guardNode(state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_CHAT_DIRECT, guardNode(state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)), nodeFailure));
+        graph.addNode(NODE_VISUAL_EDIT, guardNode(state -> CompletableFuture.completedFuture(runVisualEditNode(state, app, userId, message, userHistory, sink)), nodeFailure));
+        graph.addNode(NODE_FAIL, guardNode(state -> CompletableFuture.completedFuture(runFailNode(state, sink)), nodeFailure));
 
         graph.addEdge(StateGraph.START, NODE_PROMPT_GUARD);
         graph.addConditionalEdges(NODE_PROMPT_GUARD,
@@ -1203,18 +1239,16 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /**
      * 从 searchFrom 位置开始，检测已闭合的文件块并写入磁盘。
      * 返回新的搜索起始位置（最后一个匹配的结束位置），下次从这里继续搜索。
+     * 文件块格式与 {@link FileBundleParser} 共用同一协议与正则。
      */
-    private static final Pattern FILE_BLOCK_PATTERN =
-            Pattern.compile("```file:([^\\n\\r]+)\\R([\\s\\S]*?)```", Pattern.CASE_INSENSITIVE);
-
     private int saveCompletedFileBlocks(String content, int searchFrom, Path rootDir, boolean[] incrementalSaved) {
         try {
-            Matcher matcher = FILE_BLOCK_PATTERN.matcher(content);
+            Matcher matcher = FileBundleParser.FILE_BLOCK_PATTERN.matcher(content);
             matcher.region(searchFrom, content.length());
             int lastMatchEnd = searchFrom;
             while (matcher.find()) {
-                String fileName = matcher.group(1).trim();
-                String fileContent = matcher.group(2).strip();
+                String fileName = matcher.group("name").trim();
+                String fileContent = matcher.group("body").strip();
                 workflowFileToolService.writeFile(rootDir, fileName, fileContent);
                 log.info("[Workflow] 流式增量保存文件: {}", fileName);
                 lastMatchEnd = matcher.end();
@@ -1863,7 +1897,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         /**
          * generatedContent 是否直接来自磁盘文件（迭代修改/代码修复/可视化编辑模式），
-         * 此时内容为原始文件拼接而非 ```file: 代码块格式，质检不应按代码块格式校验。
+         * 此时内容为原始文件拼接而非 file: 代码块格式，质检不应按代码块格式校验。
          */
         boolean fileEditMode() {
             return value("fileEditMode", false);
