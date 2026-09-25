@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white" alt="Java 21" />
   <img src="https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=spring-boot&logoColor=white" alt="Spring Boot 3.5" />
   <img src="https://img.shields.io/badge/LangChain4j-1.13-FF6B6B?logo=chainlink&logoColor=white" alt="LangChain4j" />
-  <img src="https://img.shields.io/badge/版本-v5.0-blue" alt="v5.0" />
+  <img src="https://img.shields.io/badge/版本-v5.1-blue" alt="v5.1" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
 </p>
 
@@ -281,7 +281,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local
 
 ### Docker 部署（可选）
 
-使用 `docker-compose-app.yml` 独立部署主应用，当前镜像版本 `wanyj/codefreex:5.0`（两阶段构建，运行镜像内置 Chromium 与 Node.js，支持应用截图和 Vue 项目构建）：
+使用 `docker-compose-app.yml` 独立部署主应用，当前镜像版本 `wanyj/codefreex:5.1`（两阶段构建，运行镜像内置 Chromium 与 Node.js，支持应用截图和 Vue 项目构建）：
 
 ```bash
 # 首次部署先准备数据目录
