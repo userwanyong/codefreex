@@ -92,6 +92,20 @@ public class AiConfig {
     }
 
     /**
+     * jev 结构化决策模型配置属性（意图路由/生成方案路由加速）
+     */
+    @Data
+    @Configuration
+    @ConfigurationProperties(prefix = "ai.jev")
+    public static class AiJevProperties {
+        private Boolean enabled;
+        private String apiKey;
+        private String baseUrl;
+        private String modelName;
+        private Integer timeoutSeconds;
+    }
+
+    /**
      * 提示词目录配置
      */
     @Data

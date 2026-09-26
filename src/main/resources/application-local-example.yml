@@ -54,6 +54,13 @@ ai:
     api-key: your-api-key
     base-url: https://api.example.com/v1
     model-name: your-model-name
+  # jev 结构化决策模型（意图路由/生成方案路由加速，留空 api-key 自动回退预审核模型）
+  jev:
+    enabled: true
+    api-key: your-jev-api-key
+    base-url: https://www.portixapi.com/v1
+    model-name: jev-1.13.0
+    timeout-seconds: 10
 
 # 本地开发使用预下载的 WebDriver（绕过 Azure CDN 网络问题）
 app:

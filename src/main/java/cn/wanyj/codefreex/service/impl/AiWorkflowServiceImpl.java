@@ -107,6 +107,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /** 可视化编辑消息标记，由前端"选择元素"流程生成（AppChatPage handleSend） */
     private static final String VISUAL_EDIT_MARKER = "[可视化编辑]";
 
+    /** 意图分类的合法取值（jev 决策结果校验用，visual_edit 仅由前端标记触发不参与分类） */
+    private static final List<String> INTENT_VALUES = List.of("coding", "normal_edit", "chat");
+
     private static final Map<String, Channel<?>> WORKFLOW_SCHEMA = Map.of(
             "retryCount", Channel.of(() -> 0),
             "imageAssets", Channel.of(ArrayList::new)
@@ -115,6 +118,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private final ApplicationContext applicationContext;
     private final ChatModel reviewChatModel;
     private final AiConfig.PromptLoader promptLoader;
+    private final JevService jevService;
     private final AppMapper appMapper;
     private final AppService appService;
     private final ChatHistoryService chatHistoryService;
@@ -502,6 +506,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             log.info("[{}] 检测到可视化编辑标记, 直接路由, appId={}", "Workflow", appId);
             return "visual_edit";
         }
+        // jev 结构化决策快路径：毫秒级返回；未启用/失败/结果非法时回退预审核模型，最终兜底 coding
+        Optional<String> jevIntent = jevService.classify(message == null ? "" : message, "jev_intent.json");
+        if (jevIntent.isPresent() && INTENT_VALUES.contains(jevIntent.get())) {
+            log.info("[{}] jev 意图分类命中, appId={}, 意图={}", "Workflow", appId, jevIntent.get());
+            return jevIntent.get();
+        }
         try {
             String prompt = promptLoader.load("workflow_intent.txt") + message;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
@@ -513,7 +523,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 log.warn("[{}] LLM 意图分类返回 visual_edit, 已归一为 normal_edit, appId={}", "Workflow", appId);
                 intent = "normal_edit";
             }
-            if (List.of("coding", "normal_edit", "chat").contains(intent)) {
+            if (INTENT_VALUES.contains(intent)) {
                 return intent;
             }
             return "coding";
@@ -1297,6 +1307,17 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         if (app.getCodeGenType() != null && !app.getCodeGenType().isBlank()) {
             return CodeGenType.normalize(app.getCodeGenType());
         }
+        // jev 结构化决策快路径：结果非法时回退预审核模型，再兜底关键词匹配；
+        // normalize 对未知值会静默回退 HTML，因此先校验 jev 结果是合法的生成类型
+        StringBuilder routeContent = new StringBuilder();
+        if (prd != null && !prd.isBlank()) {
+            routeContent.append("PRD文档：\n").append(prd).append("\n\n");
+        }
+        routeContent.append("用户原始需求：\n").append(message);
+        Optional<String> jevRoute = jevService.classify(routeContent.toString(), "jev_route.json");
+        if (jevRoute.isPresent() && isValidRoute(jevRoute.get())) {
+            return CodeGenType.normalize(jevRoute.get());
+        }
         try {
             StringBuilder sb = new StringBuilder(promptLoader.load("workflow_route.txt"));
             if (prd != null && !prd.isBlank()) {
@@ -1329,6 +1350,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             return CodeGenType.MULTI_FILE;
         }
         return CodeGenType.HTML;
+    }
+
+    /**
+     * jev 路由结果合法性校验：必须是已定义的生成类型（不区分大小写）
+     */
+    private boolean isValidRoute(String route) {
+        return Arrays.stream(CodeGenType.values())
+                .anyMatch(type -> type.getValue().equalsIgnoreCase(route));
     }
 
     private String generateCodeStream(Long appId, Long userId, String enhancedPrompt, CodeGenType codeGenType,
