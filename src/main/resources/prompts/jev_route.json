@@ -1,0 +1,10 @@
+{
+  "question": "route",
+  "statePrefix": "",
+  "instructions": "根据用户需求和PRD文档，返回最合适的代码生成类型",
+  "criteria": {
+    "HTML": "用户需求简单，只需一个展示页面",
+    "MULTI_FILE": "需要多个页面但不涉及复杂交互",
+    "VUE": "涉及多页面、复杂交互、数据管理等"
+  }
+}

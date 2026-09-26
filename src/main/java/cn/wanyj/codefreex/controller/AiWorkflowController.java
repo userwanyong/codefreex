@@ -75,6 +75,14 @@ public class AiWorkflowController {
             throw new BusinessException(ResponseCode.NOT_LOGIN_ERROR, "未登录");
         }
 
+        // === 同一应用互斥预检：已有工作流运行时直接拒绝 ===
+        // 必须放在码点扣减之前，避免并发请求被工作流层互斥拒绝时白扣码点；
+        // 权威判定在工作流启动时（generate 内部），此处预检覆盖绝大多数场景
+        if (aiWorkflowService.isAppWorkflowRunning(request.getAppId())) {
+            throw new BusinessException(ResponseCode.TOO_MANY_REQUESTS_ERROR,
+                    "该应用正在生成中，请等待当前任务完成后再发送消息");
+        }
+
         // 判断是否首次生成（该应用是否有对话历史）
         long historyCount = chatHistoryMapper.selectCountByQuery(
                 QueryWrapper.create().where(CHAT_HISTORY.APP_ID.eq(request.getAppId()))

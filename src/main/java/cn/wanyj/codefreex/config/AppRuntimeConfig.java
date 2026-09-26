@@ -66,6 +66,8 @@ public class AppRuntimeConfig {
         private boolean imageFetchEnabled = false;
         private String pexelsApiKey;
         private String pixabayApiKey;
+        /** 页面冒烟检测（HTML/多文件产物质检时用无头浏览器采集 JS 运行错误）；环境缺失时自动跳过 */
+        private boolean smokeTestEnabled = true;
     }
 
     public static class DeployAccessProperties {

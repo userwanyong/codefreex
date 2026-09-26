@@ -39,6 +39,17 @@ public enum SystemConfigKey {
     AI_REVIEW_TIMEOUT_SECONDS("ai.review.timeout-seconds", "ai", "AI 模型配置", "预审核模型超时（秒）", ValueType.INT, "600", false,
             "推理型模型大上下文工具循环单次调用可超过 300s，过短会频繁超时重试"),
 
+    // ================= AI 结构化决策模型（jev） =================
+    AI_JEV_ENABLED("ai.jev.enabled", "ai", "AI 模型配置", "jev 决策模型开关", ValueType.BOOLEAN, "true", false,
+            "启用后意图路由/生成方案路由优先走 jev 结构化决策模型（毫秒级），未启用或调用失败自动回退预审核模型"),
+    AI_JEV_API_KEY("ai.jev.api-key", "ai", "AI 模型配置", "jev 决策模型 API Key", ValueType.STRING, "", true,
+            "jev 结构化决策模型的 API 密钥，留空视为未配置，相关判断自动回退预审核模型"),
+    AI_JEV_BASE_URL("ai.jev.base-url", "ai", "AI 模型配置", "jev 决策模型接口地址", ValueType.STRING,
+            "https://www.portixapi.com/v1", false, null),
+    AI_JEV_MODEL_NAME("ai.jev.model-name", "ai", "AI 模型配置", "jev 决策模型名称", ValueType.STRING, "jev-1.13.0", false, null),
+    AI_JEV_TIMEOUT_SECONDS("ai.jev.timeout-seconds", "ai", "AI 模型配置", "jev 决策模型超时（秒）", ValueType.INT, "10", false,
+            "jev 单次决策通常 70-500ms，超时后自动回退预审核模型"),
+
     // ================= AI 图库服务 =================
     AI_GALLERY_PEXELS_API_KEY("ai.gallery.pexels-api-key", "ai", "AI 模型配置", "Pexels 图库 API Key", ValueType.STRING, "", true,
             "工作流配图素材来源，留空则使用占位图"),

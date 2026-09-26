@@ -47,6 +47,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
     private final SystemConfigMapper systemConfigMapper;
     private final AiConfig.AiModelProperties aiModelProperties;
     private final AiConfig.AiReviewProperties aiReviewProperties;
+    private final AiConfig.AiJevProperties aiJevProperties;
     private final AppRuntimeConfig.WorkflowProperties workflowProperties;
 
     /**
@@ -227,6 +228,12 @@ public class SystemConfigServiceImpl implements SystemConfigService {
             case AI_REVIEW_TEMPERATURE -> String.valueOf(aiReviewProperties.getTemperature());
             case AI_REVIEW_MAX_TOKENS -> String.valueOf(aiReviewProperties.getMaxTokens());
             case AI_REVIEW_TIMEOUT_SECONDS -> String.valueOf(aiReviewProperties.getTimeout().toSeconds());
+            case AI_JEV_ENABLED -> aiJevProperties.getEnabled() == null ? null : String.valueOf(aiJevProperties.getEnabled());
+            case AI_JEV_API_KEY -> aiJevProperties.getApiKey();
+            case AI_JEV_BASE_URL -> aiJevProperties.getBaseUrl();
+            case AI_JEV_MODEL_NAME -> aiJevProperties.getModelName();
+            case AI_JEV_TIMEOUT_SECONDS -> aiJevProperties.getTimeoutSeconds() == null
+                    ? null : String.valueOf(aiJevProperties.getTimeoutSeconds());
             case AI_GALLERY_PEXELS_API_KEY -> workflowProperties.getPexelsApiKey();
             case AI_GALLERY_PIXABAY_API_KEY -> workflowProperties.getPixabayApiKey();
             default -> null;

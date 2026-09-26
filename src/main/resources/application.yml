@@ -98,5 +98,7 @@ app:
   workflow:
     max-quality-retry: 2
     vue-build-enabled: true
+    # 页面冒烟检测：HTML/多文件产物质检时用无头浏览器采集 JS 运行错误（浏览器缺失时自动跳过）
+    smoke-test-enabled: true
     npm-command: npm
     image-fetch-enabled: false

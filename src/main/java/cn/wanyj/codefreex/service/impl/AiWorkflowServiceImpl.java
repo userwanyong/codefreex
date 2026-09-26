@@ -50,10 +50,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -110,6 +107,9 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     /** 可视化编辑消息标记，由前端"选择元素"流程生成（AppChatPage handleSend） */
     private static final String VISUAL_EDIT_MARKER = "[可视化编辑]";
 
+    /** 意图分类的合法取值（jev 决策结果校验用，visual_edit 仅由前端标记触发不参与分类） */
+    private static final List<String> INTENT_VALUES = List.of("coding", "normal_edit", "chat");
+
     private static final Map<String, Channel<?>> WORKFLOW_SCHEMA = Map.of(
             "retryCount", Channel.of(() -> 0),
             "imageAssets", Channel.of(ArrayList::new)
@@ -118,6 +118,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private final ApplicationContext applicationContext;
     private final ChatModel reviewChatModel;
     private final AiConfig.PromptLoader promptLoader;
+    private final JevService jevService;
     private final AppMapper appMapper;
     private final AppService appService;
     private final ChatHistoryService chatHistoryService;
@@ -129,8 +130,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
     private final UserUsageService userUsageService;
     private final ObjectMapper objectMapper;
     private final AppRuntimeConfig.WorkflowProperties workflowProperties;
+    private final PageSmokeTestService pageSmokeTestService;
 
     private final Map<Long, WorkflowStatusResponse> statusMap = new ConcurrentHashMap<>();
+
+    /** 运行中工作流的应用集合：同一应用的工作流必须互斥（并行会同时修改同一项目目录并互相覆盖） */
+    private final Set<Long> runningWorkflowApps = ConcurrentHashMap.newKeySet();
 
     /** 工作流级别 token 用量累加器，key 为 appId */
     private final Map<Long, TokenUsageAccumulator> tokenAccumulatorMap = new ConcurrentHashMap<>();
@@ -172,6 +177,19 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         log.info("[{}] ========= 工作流启动, appId={}, userId={}, 消息长度={} =========", "Workflow", appId, userId, message.length());
 
         return Flux.<ServerSentEvent<String>>create(sink -> {
+            // 同一应用互斥：并发提交的两个工作流会同时工具循环改同一目录、同时 npm 构建，
+            // 且后到者的 eventCache 初始化会清掉先到者的断线回放缓存。
+            // 此时未注册 sink 映射与 ThreadLocal，emitError 不会污染先到工作流的事件缓存
+            if (!runningWorkflowApps.add(appId)) {
+                log.warn("[{}] 拒绝并发工作流, appId={} 已有任务运行中", "Workflow", appId);
+                try {
+                    emitError(sink, "该应用正在生成中，请等待当前任务完成后再发送消息");
+                    emitDone(sink);
+                } catch (Exception ignored) {
+                }
+                sink.complete();
+                return;
+            }
             ChatHistory userHistory = null;
             long startTime = System.currentTimeMillis();
             tokenAccumulatorMap.put(appId, new TokenUsageAccumulator());
@@ -257,33 +275,35 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 }
 
                 String generatedContent = finalState.generatedContent();
+                // 构建失败但流程走完（自愈耗尽后的宽松路径）：终态必须如实标注，不静默标成功
+                boolean buildFailed = finalState.buildFailed();
                 if (finalState.isVisualEdit()) {
                     ChatMemory chatMemory = chatMemoryService.getChatMemory(
                             appId, userId, promptLoader.load("workflow_visual_edit.txt"));
                     chatMemory.add(AiMessage.from("可视化编辑已完成，修改已保存到文件系统"));
                     restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     saveNodeMessage(appId, userId, userHistory.getId(), NODE_EDIT_COMPLETE, "edit completed");
-                    log.info("[{}] ========= 可视化编辑完成, appId={}, 重试次数={} =========", "Workflow", appId, finalState.retryCount());
+                    log.info("[{}] ========= 可视化编辑完成, appId={}, 重试次数={}, 构建失败={} =========", "Workflow", appId, finalState.retryCount(), buildFailed);
                     updateStatus(appId, "completed", NODE_VISUAL_EDIT, app.getCodeGenType(),
-                            finalState.retryCount(), "visual edit completed");
+                            finalState.retryCount(), buildFailed ? "visual edit completed with build failure" : "visual edit completed");
                 } else if (finalState.isNormalEdit()) {
                     ChatMemory chatMemory = chatMemoryService.getChatMemory(
                             appId, userId, promptLoader.load("workflow_normal_edit.txt"));
                     chatMemory.add(AiMessage.from("普通编辑已完成，修改已保存到文件系统"));
                     restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     saveNodeMessage(appId, userId, userHistory.getId(), NODE_EDIT_COMPLETE, "edit completed");
-                    log.info("[{}] ========= 普通编辑完成, appId={}, 重试次数={} =========", "Workflow", appId, finalState.retryCount());
+                    log.info("[{}] ========= 普通编辑完成, appId={}, 重试次数={}, 构建失败={} =========", "Workflow", appId, finalState.retryCount(), buildFailed);
                     updateStatus(appId, "completed", NODE_NORMAL_EDIT, app.getCodeGenType(),
-                            finalState.retryCount(), "normal edit completed");
+                            finalState.retryCount(), buildFailed ? "normal edit completed with build failure" : "normal edit completed");
                 } else {
                     ChatMemory chatMemory = chatMemoryService.getChatMemory(
                             appId, userId, promptLoader.load(resolvePromptTemplate(finalState.routeType())));
                     chatMemory.add(AiMessage.from("代码已生成并保存到文件系统"));
                     restoreAppStatus(appId, wasDeployed, AppStatus.GENERATED);
                     saveNodeMessage(appId, userId, userHistory.getId(), NODE_PERSIST, "artifacts persisted");
-                    log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={} =========", "Workflow", appId, finalState.route(), finalState.retryCount());
+                    log.info("[{}] ========= 工作流完成, appId={}, route={}, 重试次数={}, 构建失败={} =========", "Workflow", appId, finalState.route(), finalState.retryCount(), buildFailed);
                     updateStatus(appId, "completed", NODE_PERSIST, finalState.route(),
-                            finalState.retryCount(), "workflow completed");
+                            finalState.retryCount(), buildFailed ? "workflow completed with build failure" : "workflow completed");
                 }
 
                 recordWorkflowUsage(appId, userId, startTime, "success", null);
@@ -305,6 +325,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                     sink.complete();
                 }
             } finally {
+                runningWorkflowApps.remove(appId);
                 CURRENT_APP_ID.remove();
                 sinkAppIdMap.remove(sink);
                 // 确保 Flux sink 始终被关闭（部分成功路径遗漏了 sink.complete()）
@@ -315,6 +336,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 scheduleCacheCleanup(appId);
             }
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @Override
+    public boolean isAppWorkflowRunning(Long appId) {
+        return runningWorkflowApps.contains(appId);
     }
 
     @Override
@@ -369,7 +395,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         graph.addNode(NODE_PROMPT_ENHANCE, guardNode(state -> CompletableFuture.completedFuture(runPromptEnhanceNode(state, app, message, userHistory, userId, sink)), nodeFailure));
         graph.addNode(NODE_ROUTE, guardNode(state -> CompletableFuture.completedFuture(runRouteNode(state, app, message, userHistory, userId, sink)), nodeFailure));
         graph.addNode(NODE_CODE_GEN, guardNode(state -> CompletableFuture.completedFuture(runCodeGenNode(state, app, userId, userHistory, sink)), nodeFailure));
-        graph.addNode(NODE_QUALITY_CHECK, guardNode(state -> CompletableFuture.completedFuture(runQualityCheckNode(state, userHistory, userId, sink)), nodeFailure));
+        graph.addNode(NODE_QUALITY_CHECK, guardNode(state -> CompletableFuture.completedFuture(runQualityCheckNode(state, app, userHistory, userId, sink)), nodeFailure));
         graph.addNode(NODE_CODE_FIX, guardNode(state -> CompletableFuture.completedFuture(runCodeFixNode(state, app, userId, userHistory, sink)), nodeFailure));
         graph.addNode(NODE_INTENT_CLASSIFY, guardNode(state -> CompletableFuture.completedFuture(runIntentClassifyNode(state, message, userHistory, userId, sink)), nodeFailure));
         graph.addNode(NODE_CHAT_DIRECT, guardNode(state -> CompletableFuture.completedFuture(runChatDirectNode(state, appId, userId, message, userHistory, sink)), nodeFailure));
@@ -480,6 +506,12 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             log.info("[{}] 检测到可视化编辑标记, 直接路由, appId={}", "Workflow", appId);
             return "visual_edit";
         }
+        // jev 结构化决策快路径：毫秒级返回；未启用/失败/结果非法时回退预审核模型，最终兜底 coding
+        Optional<String> jevIntent = jevService.classify(message == null ? "" : message, "jev_intent.json");
+        if (jevIntent.isPresent() && INTENT_VALUES.contains(jevIntent.get())) {
+            log.info("[{}] jev 意图分类命中, appId={}, 意图={}", "Workflow", appId, jevIntent.get());
+            return jevIntent.get();
+        }
         try {
             String prompt = promptLoader.load("workflow_intent.txt") + message;
             ChatResponse response = reviewChatModel.chat(UserMessage.from(prompt));
@@ -491,7 +523,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 log.warn("[{}] LLM 意图分类返回 visual_edit, 已归一为 normal_edit, appId={}", "Workflow", appId);
                 intent = "normal_edit";
             }
-            if (List.of("coding", "normal_edit", "chat").contains(intent)) {
+            if (INTENT_VALUES.contains(intent)) {
                 return intent;
             }
             return "coding";
@@ -628,9 +660,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         // 如果存在 source/ 目录，说明是 Vue 等需要构建的项目，编辑修改了源码后需要重新构建
         boolean hasSourceDir = Files.exists(rootDir.resolve("source"));
         log.info("[Workflow] {} 构建检查, appId={}, codeGenType={}, hasSourceDir={}", node, appId, app.getCodeGenType(), hasSourceDir);
+        boolean buildFailed = false;
         if (hasSourceDir) {
-            // 构建失败自动修复一轮（错误输出注入修复迭代），仍未成功则告警继续
-            buildVueProjectWithSelfHeal(rootDir, appId, userId, userHistory.getId(), sink, message, 1, false, completionLabel);
+            // 构建失败自动修复一轮（错误输出注入修复迭代），仍未成功则告警继续，
+            // 失败状态写入 buildFailed 供工作流终点如实上报
+            buildFailed = !buildVueProjectWithSelfHeal(rootDir, appId, userId, userHistory.getId(), sink, message, 1, false, completionLabel);
             // 构建后重新读取产物内容供质检
             generatedContent = readMainFileContent(rootDir);
         }
@@ -639,12 +673,16 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         emitToolExecuted(sink, node, Map.of("updated", true));
         saveNodeMessage(appId, userId, userHistory.getId(), node, completionLabel);
 
-        return Map.of(
-                "intent", intentValue,
-                "generatedContent", generatedContent,
-                "fileEditMode", true,
-                "currentNode", node,
-                "statusMessage", "edit completed");
+        Map<String, Object> editResult = new LinkedHashMap<>();
+        editResult.put("intent", intentValue);
+        editResult.put("generatedContent", generatedContent);
+        editResult.put("fileEditMode", true);
+        if (buildFailed) {
+            editResult.put("buildFailed", true);
+        }
+        editResult.put("currentNode", node);
+        editResult.put("statusMessage", "edit completed");
+        return editResult;
     }
 
     /**
@@ -825,12 +863,13 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         String generatedContent;
         boolean codeGenMessageSaved = false;
+        boolean buildFailed = false;
         if (hasExistingFiles) {
             // 后续迭代：使用工具调用模式，AI 自主读取和修改文件
             log.info("[{}] codeGenNode 检测到已有文件，进入迭代修改模式, appId={}", "Workflow", appId);
             generatedContent = runCodeGenIteration(rootDir, state.enhancedPrompt(), appId);
             // 迭代修改直接落盘，Vue 等需要构建的项目必须重新构建才能让修改生效
-            rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "迭代修改");
+            buildFailed = !rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "迭代修改");
         } else {
             // 初次生成：保持流式生成
             boolean[] incrementalSaved = {false};
@@ -851,33 +890,53 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             codeGenMessageSaved = true;
             if (state.routeType() == CodeGenType.VUE && incrementalSaved[0]) {
                 // 增量保存已将文件写入 rootDir/，需要移到 rootDir/source/ 后执行构建
-                buildIncrementalVueProject(rootDir, appId, userId, userHistory.getId(), sink, state.enhancedPrompt());
+                buildFailed = !buildIncrementalVueProject(rootDir, appId, userId, userHistory.getId(), sink, state.enhancedPrompt());
             }
         }
 
-        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}", "Workflow", appId, generatedContent.length());
+        log.info("[{}] <<< codeGenNode 完成, appId={}, 生成内容长度={}, 构建失败={}", "Workflow", appId, generatedContent.length(), buildFailed);
         emitToolExecuted(sink, NODE_CODE_GEN, Map.of("length", generatedContent.length(), "retry", state.retryCount(), "persisted", true));
         if (!codeGenMessageSaved) {
             saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_CODE_GEN, "代码已生成并保存");
         }
-        return Map.of(
-                "generatedContent", generatedContent,
-                "fileEditMode", hasExistingFiles,
-                "currentNode", NODE_CODE_GEN,
-                "statusMessage", "code generated and persisted");
+        Map<String, Object> codeGenResult = new LinkedHashMap<>();
+        codeGenResult.put("generatedContent", generatedContent);
+        codeGenResult.put("fileEditMode", hasExistingFiles);
+        if (buildFailed) {
+            codeGenResult.put("buildFailed", true);
+        }
+        codeGenResult.put("currentNode", NODE_CODE_GEN);
+        codeGenResult.put("statusMessage", "code generated and persisted");
+        return codeGenResult;
     }
 
     /**
-     * 后续迭代：AI 通过工具调用读取现有文件并修改
+     * 后续迭代：AI 通过工具调用读取现有文件并修改（严格语义：无变更且未声明"无需修改"时抛出）
      */
     private String runCodeGenIteration(Path rootDir, String enhancedPrompt, Long appId) {
+        boolean[] changedOut = {false};
+        String finalText = runIterationUntilChanged(rootDir, enhancedPrompt, appId, changedOut);
+        if (!changedOut[0] && !finalText.contains("无需修改")) {
+            log.error("[Workflow] codeGenIteration 结束但未修改任何文件, appId={}", appId);
+            throw new RuntimeException("AI 未对项目文件做出任何修改，本次需求未生效");
+        }
+        return readMainFileContent(rootDir);
+    }
+
+    /**
+     * 迭代修改核心：工具循环 + 变更检测，未变更时追加强提醒重试一次。
+     * 返回 AI 最终文本，changedOut[0] 标记是否产生了真实文件变更。
+     * 本方法不抛出"未修改"异常，由调用方决定严格处理（主迭代：工作流失败）
+     * 或宽松处理（构建自愈轮：告警放弃，不得让修复轮失败炸掉整个工作流）。
+     */
+    private String runIterationUntilChanged(Path rootDir, String prompt, Long appId, boolean[] changedOut) {
         WorkflowFileTools fileTools = new WorkflowFileTools(rootDir, workflowFileToolService);
         List<ToolSpecification> toolSpecs = ToolSpecifications.toolSpecificationsFrom(fileTools);
 
         String systemPrompt = promptLoader.load("workflow_code_iteration.txt");
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(SystemMessage.from(systemPrompt));
-        messages.add(UserMessage.from("请根据用户需求修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户需求:\n" + enhancedPrompt));
+        messages.add(UserMessage.from("请根据用户需求修改项目代码。先列出文件结构，再读取需要修改的文件，然后进行修改。\n\n用户需求:\n" + prompt));
 
         int maxRounds = 15;
         String contentBefore = readMainFileContent(rootDir);
@@ -891,12 +950,8 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             finalText = runIterationToolLoop(fileTools, toolSpecs, messages, appId, "codeGenIteration", maxRounds);
             changed = !contentBefore.equals(readMainFileContent(rootDir));
         }
-
-        if (!changed && !finalText.contains("无需修改")) {
-            log.error("[Workflow] codeGenIteration 结束但未修改任何文件, appId={}", appId);
-            throw new RuntimeException("AI 未对项目文件做出任何修改，本次需求未生效");
-        }
-        return readMainFileContent(rootDir);
+        changedOut[0] = changed;
+        return finalText;
     }
 
     /**
@@ -1024,10 +1079,26 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         messages.addAll(compacted);
     }
 
-    private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, ChatHistory userHistory, Long userId, FluxSink<ServerSentEvent<String>> sink) {
+    private Map<String, Object> runQualityCheckNode(WorkflowGraphState state, App app, ChatHistory userHistory,
+                                                    Long userId, FluxSink<ServerSentEvent<String>> sink) {
         log.info("[{}] >>> qualityCheckNode 开始执行, 当前重试次数={}", "Workflow", state.retryCount());
         emitToolRequest(sink, NODE_QUALITY_CHECK, Map.of("retry", state.retryCount()));
         QualityCheckResult qualityCheckResult = qualityCheck(state.routeType(), state.generatedContent(), state.fileEditMode());
+        // 结构校验通过后，对 HTML/多文件产物做无头浏览器冒烟：这两类产物没有构建环节，
+        // JS 运行时错误（未定义变量、语法错误等）此前会静默通过质检直接交付。
+        // Vue 产物是 ES module，file:// 加载必报 CORS，冒烟不适用（由构建校验兜底）；
+        // 冒烟失败让质检不通过并携带控制台错误，修复节点据此精准定位
+        if (qualityCheckResult.pass()
+                && workflowProperties.isSmokeTestEnabled()
+                && state.routeType() != CodeGenType.VUE) {
+            Path rootDir = Path.of(AppConstant.CODE_OUTPUT_ROOT_DIR, app.getDeployKey());
+            List<String> pageErrors = pageSmokeTestService.collectPageErrors(rootDir.resolve("index.html"));
+            if (!pageErrors.isEmpty()) {
+                log.warn("[{}] 页面冒烟检测发现 {} 处运行错误, appId={}", "Workflow", pageErrors.size(), userHistory.getAppId());
+                qualityCheckResult = new QualityCheckResult(false,
+                        "页面运行报错（浏览器控制台，需修复后页面无报错）:\n" + String.join("\n", pageErrors));
+            }
+        }
         log.info("[{}] <<< qualityCheckNode 完成, 通过={}, 原因={}", "Workflow", qualityCheckResult.pass(), qualityCheckResult.reason());
         emitToolExecuted(sink, NODE_QUALITY_CHECK, qualityCheckResult);
         saveNodeMessage(userHistory.getAppId(), userId, userHistory.getId(), NODE_QUALITY_CHECK, qualityCheckResult.reason());
@@ -1065,15 +1136,19 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         emitToolExecuted(sink, NODE_CODE_FIX, Map.of("summary", fixSummary), fixSummary);
         saveNodeMessage(appId, userId, userHistory.getId(), NODE_CODE_FIX, fixSummary);
         // 修复可能修改了源码，Vue 等需要构建的项目必须重新构建才能让修复生效
-        rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "代码修复");
+        boolean fixBuildOk = rebuildVueProjectIfSourceExists(rootDir, appId, userId, userHistory.getId(), sink, "代码修复");
         // 读取修复后的磁盘文件内容，供质量检查节点使用
         String updatedContent = readMainFileContent(rootDir);
-        return Map.of(
-                "generatedContent", updatedContent,
-                "fileEditMode", true,
-                "lastFixReason", "",
-                "currentNode", NODE_CODE_FIX,
-                "statusMessage", "code fix applied");
+        Map<String, Object> fixResult = new LinkedHashMap<>();
+        fixResult.put("generatedContent", updatedContent);
+        fixResult.put("fileEditMode", true);
+        fixResult.put("lastFixReason", "");
+        if (!fixBuildOk) {
+            fixResult.put("buildFailed", true);
+        }
+        fixResult.put("currentNode", NODE_CODE_FIX);
+        fixResult.put("statusMessage", "code fix applied");
+        return fixResult;
     }
 
     private String executeToolCall(WorkflowFileTools fileTools, ToolExecutionRequest request) {
@@ -1232,6 +1307,17 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         if (app.getCodeGenType() != null && !app.getCodeGenType().isBlank()) {
             return CodeGenType.normalize(app.getCodeGenType());
         }
+        // jev 结构化决策快路径：结果非法时回退预审核模型，再兜底关键词匹配；
+        // normalize 对未知值会静默回退 HTML，因此先校验 jev 结果是合法的生成类型
+        StringBuilder routeContent = new StringBuilder();
+        if (prd != null && !prd.isBlank()) {
+            routeContent.append("PRD文档：\n").append(prd).append("\n\n");
+        }
+        routeContent.append("用户原始需求：\n").append(message);
+        Optional<String> jevRoute = jevService.classify(routeContent.toString(), "jev_route.json");
+        if (jevRoute.isPresent() && isValidRoute(jevRoute.get())) {
+            return CodeGenType.normalize(jevRoute.get());
+        }
         try {
             StringBuilder sb = new StringBuilder(promptLoader.load("workflow_route.txt"));
             if (prd != null && !prd.isBlank()) {
@@ -1264,6 +1350,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             return CodeGenType.MULTI_FILE;
         }
         return CodeGenType.HTML;
+    }
+
+    /**
+     * jev 路由结果合法性校验：必须是已定义的生成类型（不区分大小写）
+     */
+    private boolean isValidRoute(String route) {
+        return Arrays.stream(CodeGenType.values())
+                .anyMatch(type -> type.getValue().equalsIgnoreCase(route));
     }
 
     private String generateCodeStream(Long appId, Long userId, String enhancedPrompt, CodeGenType codeGenType,
@@ -1360,9 +1454,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
     /**
      * 增量保存的 Vue 文件直接写在了 rootDir/ 下，需要移到 rootDir/source/ 后执行构建。
+     *
+     * @return 构建是否成功
      */
-    private void buildIncrementalVueProject(Path rootDir, Long appId, Long userId, Long parentId,
-                                            FluxSink<ServerSentEvent<String>> sink, String enhancedPrompt) {
+    private boolean buildIncrementalVueProject(Path rootDir, Long appId, Long userId, Long parentId,
+                                               FluxSink<ServerSentEvent<String>> sink, String enhancedPrompt) {
         Path sourceDir = rootDir.resolve("source");
         try {
             Files.createDirectories(sourceDir);
@@ -1383,19 +1479,22 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
         }
         // 构建失败自动修复：构建错误输出尾部注入修复迭代，最多 2 轮。
         // 注意必须就地消化失败、不得抛出：抛出会触发 langgraph 节点重执行并在节点完成后
-        // 以延迟异常判死工作流，导致自愈成果被丢弃（自愈期间 UI 也无失败反馈）
-        buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, enhancedPrompt, 2, false, "Vue 项目");
+        // 以延迟异常判死工作流，导致自愈成果被丢弃（自愈期间 UI 也无失败反馈）。
+        // 失败以返回值透传，由调用方写入工作流状态，避免最终状态静默标成功
+        return buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, enhancedPrompt, 2, false, "Vue 项目");
     }
 
     /**
      * 执行 Vue 构建并在失败时自动修复：将构建错误输出尾部注入修复迭代提示词，
-     * 让 AI 针对错误做最小化修复后重建。共 maxFixRounds 轮修复机会，仍未成功时
-     * 按 throwOnFail 决定抛出中断工作流或告警继续。
+     * 让 AI 针对错误做最小化修复后重建。共 maxFixRounds 轮修复机会。
+     *
+     * @return 构建是否成功；throwOnFail=true 时失败直接抛出，否则告警并返回 false
+     *（调用方应把失败状态透传到工作流结果，不得静默当作成功）
      */
-    private void buildVueProjectWithSelfHeal(Path rootDir, Long appId, Long userId, Long parentId,
-                                             FluxSink<ServerSentEvent<String>> sink,
-                                             String fixContextPrompt, int maxFixRounds,
-                                             boolean throwOnFail, String reason) {
+    private boolean buildVueProjectWithSelfHeal(Path rootDir, Long appId, Long userId, Long parentId,
+                                                FluxSink<ServerSentEvent<String>> sink,
+                                                String fixContextPrompt, int maxFixRounds,
+                                                boolean throwOnFail, String reason) {
         String lastError = null;
         for (int attempt = 0; attempt <= maxFixRounds; attempt++) {
             try {
@@ -1412,7 +1511,7 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                 emitToolExecuted(sink, NODE_BUILD, Map.of("result", "success"), "构建完成");
                 saveNodeMessage(appId, userId, parentId, NODE_BUILD, "构建完成");
                 log.info("[Workflow] {}构建完成, appId={}", reason, appId);
-                return;
+                return true;
             } catch (Exception e) {
                 lastError = e.getMessage() == null ? "未知错误" : e.getMessage();
                 emitToolExecuted(sink, NODE_BUILD, Map.of("result", "failed"), "构建失败");
@@ -1428,7 +1527,14 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
                         + "禁止更换框架、构建工具或技术栈：\n\n【构建错误输出（末尾）】\n" + lastError
                         + "\n\n【原始需求】\n" + (fixContextPrompt == null || fixContextPrompt.isBlank()
                                 ? "（无，请仅针对构建错误修复）" : fixContextPrompt);
-                runCodeGenIteration(rootDir, fixPrompt, appId);
+                // 自愈轮必须宽松消化"AI 未做修改"的情况：修复轮只是增强手段，
+                // 严格语义的异常会穿透本方法的 throwOnFail 控制炸掉整个工作流
+                boolean[] healChanged = {false};
+                runIterationUntilChanged(rootDir, fixPrompt, appId, healChanged);
+                if (!healChanged[0]) {
+                    log.warn("[Workflow] {}自动修复轮未产生文件变更, 提前终止自愈, appId={}", reason, appId);
+                    break;
+                }
             }
         }
         String message = reason + "构建失败（已自动修复 " + maxFixRounds + " 轮仍未成功）: " + lastError;
@@ -1436,18 +1542,21 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
             throw new RuntimeException(message);
         }
         log.warn("[Workflow] {}, 继续流程, appId={}", message, appId);
+        return false;
     }
 
     /**
      * 迭代修改/代码修复后，若存在 source/ 目录（Vue 等需要构建的项目），重新构建使修改生效。
      * 构建失败自动修复一轮（构建错误输出注入修复迭代），仍未成功则告警继续，由后续节点兜底。
+     *
+     * @return true = 无需构建或构建成功；false = 构建失败（调用方应透传到工作流状态）
      */
-    private void rebuildVueProjectIfSourceExists(Path rootDir, Long appId, Long userId, Long parentId,
-                                                 FluxSink<ServerSentEvent<String>> sink, String reason) {
+    private boolean rebuildVueProjectIfSourceExists(Path rootDir, Long appId, Long userId, Long parentId,
+                                                    FluxSink<ServerSentEvent<String>> sink, String reason) {
         if (!Files.exists(rootDir.resolve("source"))) {
-            return;
+            return true;
         }
-        buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, null, 1, false, reason);
+        return buildVueProjectWithSelfHeal(rootDir, appId, userId, parentId, sink, null, 1, false, reason);
     }
 
     private QualityCheckResult qualityCheck(CodeGenType codeGenType, String generatedContent, boolean fileEditMode) {
@@ -2010,6 +2119,11 @@ public class AiWorkflowServiceImpl implements AiWorkflowService {
 
         boolean qualityPass() {
             return value("qualityPass", false);
+        }
+
+        /** Vue 等构建型项目自愈后仍构建失败（工作流照常完成，但终态如实上报，不静默标成功） */
+        boolean buildFailed() {
+            return value("buildFailed", false);
         }
 
         int retryCount() {
