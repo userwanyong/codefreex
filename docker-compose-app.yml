@@ -12,7 +12,7 @@
 
 services:
   codefreex-app:
-    image: registry.cn-wulanchabu.aliyuncs.com/wanyj/codefreex:5.0
+    image: registry.cn-wulanchabu.aliyuncs.com/wanyj/codefreex:5.2
     container_name: codefreex-app
     restart: unless-stopped
     environment:
