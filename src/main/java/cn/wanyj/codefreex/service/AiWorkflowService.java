@@ -16,6 +16,9 @@ public interface AiWorkflowService {
 
     Flux<ServerSentEvent<String>> generate(Long appId, String message);
 
+    /** 该应用是否有工作流正在运行（提交前的互斥预检，权威判定在 generate 内部） */
+    boolean isAppWorkflowRunning(Long appId);
+
     WorkflowStatusResponse getStatus(Long appId);
 
     /** 注册重连订阅者，实时接收工作流事件 */

@@ -39,9 +39,9 @@ public class WorkflowFileTools {
         return "文件写入成功: " + relativePath;
     }
 
-    @Tool("编辑文件中的一部分内容，通过查找原始文本并替换为新文本。适合局部修改，不会影响文件其他部分。")
+    @Tool("编辑文件中的一部分内容：查找原始文本并替换为新文本。适合局部修改，不会影响文件其他部分。原始文本必须在文件中唯一，多处匹配会报错。")
     public String editFile(@P("相对于项目根目录的文件路径") String relativePath,
-                          @P("要被替换的原始文本（必须与文件中的内容完全匹配）") String originalContent,
+                          @P("要被替换的原始文本（必须与文件中的内容完全一致且在文件中唯一，包含足够的上下文）") String originalContent,
                           @P("替换后的新文本") String newContent) {
         fileToolService.editFile(rootDir, relativePath, originalContent, newContent);
         return "文件修改成功: " + relativePath;

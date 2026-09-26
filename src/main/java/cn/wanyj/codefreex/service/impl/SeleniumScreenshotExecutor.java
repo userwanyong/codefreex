@@ -2,16 +2,11 @@ package cn.wanyj.codefreex.service.impl;
 
 import cn.wanyj.codefreex.config.AppRuntimeConfig;
 import cn.wanyj.codefreex.service.ScreenshotExecutor;
-import io.github.bonigarcia.wdm.WebDriverManager;
 import lombok.RequiredArgsConstructor;
 import org.openqa.selenium.Dimension;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.chrome.ChromeOptions;
-import org.openqa.selenium.edge.EdgeDriver;
-import org.openqa.selenium.edge.EdgeOptions;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -28,10 +23,11 @@ import java.time.Duration;
 public class SeleniumScreenshotExecutor implements ScreenshotExecutor {
 
     private final AppRuntimeConfig.ScreenshotProperties screenshotProperties;
+    private final HeadlessBrowserFactory browserFactory;
 
     @Override
     public void capture(String url, Path outputPath, int width, int height) {
-        WebDriver webDriver = createDriver();
+        WebDriver webDriver = browserFactory.create();
         try {
             webDriver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(screenshotProperties.getPageLoadTimeoutSeconds()));
             webDriver.manage().window().setSize(new Dimension(width, height));
@@ -47,41 +43,5 @@ public class SeleniumScreenshotExecutor implements ScreenshotExecutor {
         } finally {
             webDriver.quit();
         }
-    }
-
-    private WebDriver createDriver() {
-        String browser = screenshotProperties.getBrowser();
-        boolean useLocalDriver = hasText(screenshotProperties.getDriverPath());
-
-        if ("chrome".equalsIgnoreCase(browser)) {
-            if (useLocalDriver) {
-                System.setProperty("webdriver.chrome.driver", screenshotProperties.getDriverPath());
-            } else {
-                WebDriverManager.chromedriver().setup();
-            }
-            ChromeOptions options = new ChromeOptions();
-            options.addArguments("--headless=new", "--disable-gpu", "--no-sandbox");
-            if (hasText(screenshotProperties.getBrowserBinaryPath())) {
-                options.setBinary(screenshotProperties.getBrowserBinaryPath());
-            }
-            return new ChromeDriver(options);
-        }
-
-        // Edge
-        if (useLocalDriver) {
-            System.setProperty("webdriver.edge.driver", screenshotProperties.getDriverPath());
-        } else {
-            WebDriverManager.edgedriver().setup();
-        }
-        EdgeOptions options = new EdgeOptions();
-        options.addArguments("--headless=new", "--disable-gpu", "--no-sandbox");
-        if (hasText(screenshotProperties.getBrowserBinaryPath())) {
-            options.setBinary(screenshotProperties.getBrowserBinaryPath());
-        }
-        return new EdgeDriver(options);
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 }

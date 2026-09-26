@@ -41,15 +41,38 @@ public class LocalWorkflowFileToolService implements WorkflowFileToolService {
     @Override
     public void editFile(Path rootDir, String relativePath, String originalContent, String newContent) {
         Path file = resolvePath(rootDir, relativePath);
+        if (originalContent == null || originalContent.isEmpty()) {
+            // 空串 contains 恒真且 replace 会在每个字符间插入内容，必须显式拒绝
+            throw new BusinessException(ResponseCode.PARAMS_ERROR, "待替换内容不能为空");
+        }
+        String replacement = newContent == null ? "" : newContent;
         try {
             String content = Files.readString(file);
-            if (!content.contains(originalContent)) {
+            int occurrences = countOccurrences(content, originalContent);
+            if (occurrences == 0) {
                 throw new BusinessException(ResponseCode.NOT_FOUND_ERROR, "未找到待修改内容");
             }
-            Files.writeString(file, content.replace(originalContent, newContent), StandardOpenOption.TRUNCATE_EXISTING);
+            // String.replace 会替换全部出现处，短片段（如 "</div>"）会把无关代码一并改掉；
+            // 限定唯一匹配，多处匹配时报错让模型补充上下文后重试
+            if (occurrences > 1) {
+                throw new BusinessException(ResponseCode.PARAMS_ERROR,
+                        "待修改内容在文件中匹配到 " + occurrences + " 处，请提供更长的上下文确保唯一匹配");
+            }
+            Files.writeString(file, content.replace(originalContent, replacement),
+                    StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {
             throw new RuntimeException("修改文件失败: " + relativePath, e);
         }
+    }
+
+    private static int countOccurrences(String content, String target) {
+        int count = 0;
+        int index = 0;
+        while ((index = content.indexOf(target, index)) >= 0) {
+            count++;
+            index += target.length();
+        }
+        return count;
     }
 
     @Override
